@@ -4,14 +4,18 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: 'Aksi yang akan dijalankan (get_qr, get_pairing_code, start_blast, stop_blast)'
+        description: 'Aksi yang akan dijalankan (misal: get_qr)'
         required: true
         default: 'get_qr'
       bot_id:
-        description: 'ID Bot WhatsApp (hanya untuk start/stop blast)'
+        description: 'ID Bot WhatsApp (opsional)'
         required: false
       phone_number:
-        description: 'Nomor telepon (hanya untuk get_pairing_code)'
+        description: 'Nomor telepon (opsional)'
+        required: false
+      # Input ini akan kita gunakan untuk mengirim ID unik dari PHP
+      callback_extra_data:
+        description: 'Data tambahan untuk dikirim balik ke callback, seperti session_id'
         required: false
 
 jobs:
@@ -37,7 +41,7 @@ jobs:
           TERIMAWA_USERNAME: ${{ secrets.TERIMAWA_USERNAME }}
           TERIMAWA_PASSWORD: ${{ secrets.TERIMAWA_PASSWORD }}
           
-          # URL untuk mengirim hasil ke shared hosting Anda
+          # URL dan kunci rahasia untuk mengirim hasil ke shared hosting Anda
           CALLBACK_URL: ${{ secrets.CALLBACK_URL }}
           CALLBACK_SECRET: ${{ secrets.CALLBACK_SECRET }}
           
@@ -45,3 +49,4 @@ jobs:
           ACTION: ${{ github.event.inputs.action }}
           BOT_ID: ${{ github.event.inputs.bot_id }}
           PHONE_NUMBER: ${{ github.event.inputs.phone_number }}
+          CALLBACK_EXTRA_DATA: ${{ github.event.inputs.callback_extra_data }}
