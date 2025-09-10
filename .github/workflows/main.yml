@@ -1,7 +1,7 @@
 name: Run Terimawa Python Bot
 
 on:
-  workflow_dispatch: # Memungkinkan kita menjalankan skrip secara manual
+  workflow_dispatch:
 
 jobs:
   run-playwright:
@@ -14,19 +14,21 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10' # Versi Python yang stabil
+          python-version: '3.10'
 
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
+      # --- LANGKAH TAMBAHAN UNTUK MEMBERSIHKAN CACHE ---
+      - name: Clear Playwright cache
+        run: rm -rf ~/.cache/ms-playwright
+
       - name: Install Playwright browsers and dependencies
-        run: |
-          playwright install --with-deps
-          # Perintah --with-deps akan menginstal semua library sistem yang dibutuhkan
+        run: playwright install --with-deps
 
       - name: Run the bot script
+        # --- PASTIKAN NAMA FILE DI SINI SAMA DENGAN NAMA FILE PYTHON ANDA ---
         run: python run_bot.py
         env:
-          # Mengambil kredensial dari GitHub Secrets
           TERIMAWA_USERNAME: ${{ secrets.TERIMAWA_USERNAME }}
           TERIMAWA_PASSWORD: ${{ secrets.TERIMAWA_PASSWORD }}
