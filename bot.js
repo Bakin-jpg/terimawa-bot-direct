@@ -1,7 +1,13 @@
 const puppeteer = require('puppeteer-core');
 const chromium = require('@sparticuz/chromium');
 
-// Ambil kredensial dari GitHub Secrets yang aman
+// --- KONFIGURASI ---
+const LOGIN_PAGE_URL = "https://app.terimawa.com/login";
+const SUCCESS_URL_REDIRECT = "https://app.terimawa.com/";
+const BOTS_PAGE_URL = "https://app.terimawa.com/bots";
+const API_URL = "https://app.terimawa.com/api/bots";
+
+// Ambil kredensial dari GitHub Secrets
 const { TERIMAWA_USERNAME, TERIMAWA_PASSWORD } = process.env;
 
 async function getQrCode() {
@@ -11,6 +17,8 @@ async function getQrCode() {
     }
 
     let browser = null;
+    let page = null;
+
     try {
         console.log("1. Meluncurkan browser virtual...");
         browser = await puppeteer.launch({
@@ -18,13 +26,13 @@ async function getQrCode() {
             defaultViewport: chromium.defaultViewport,
             executablePath: await chromium.executablePath(),
             headless: chromium.headless,
-            // Kita tidak lagi butuh proxy, jadi tidak ada args proxy di sini
         });
 
-        const page = await browser.newPage();
+        page = await browser.newPage();
+        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
 
-        console.log("2. Membuka halaman login https://app.terimawa.com/login...");
-        await page.goto('https://app.terimawa.com/login', { waitUntil: 'networkidle0', timeout: 60000 });
+        console.log(`2. Membuka halaman login: ${LOGIN_PAGE_URL}`);
+        await page.goto(LOGIN_PAGE_URL, { waitUntil: 'networkidle0', timeout: 60000 });
 
         console.log("3. Mengisi form login...");
         await page.type('input[name="username"]', TERIMAWA_USERNAME);
@@ -35,37 +43,42 @@ async function getQrCode() {
             page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 30000 }),
             page.click('button[type="submit"]')
         ]);
-        
-        console.log("   ✅ Login berhasil. URL saat ini:", page.url());
 
-        console.log("5. Menavigasi ke halaman tambah WhatsApp...");
-        await page.goto('https://app.terimawa.com/whatsapp/create', { waitUntil: 'networkidle0' });
-
-        console.log("6. Mengklik tombol untuk menghasilkan QR Code...");
-        await page.click('button:has-text("Buat Koneksi")'); // Tombol ini mungkin berbeda, sesuaikan jika perlu
-
-        console.log("7. Menunggu QR Code muncul dan mengambil datanya...");
-        await page.waitForSelector('canvas', { timeout: 30000 });
-
-        const qrCodeDataUrl = await page.evaluate(() => {
-            const canvas = document.querySelector('canvas');
-            return canvas ? canvas.toDataURL('image/png') : null;
-        });
-
-        if (!qrCodeDataUrl) {
-            throw new Error("Tidak dapat menemukan elemen canvas untuk QR Code.");
+        if (!page.url().startsWith(SUCCESS_URL_REDIRECT)) {
+            throw new Error(`Gagal login. URL saat ini: ${page.url()}. Kemungkinan username/password salah.`);
         }
-
-        console.log("\n\n✅✅✅ QR CODE BERHASIL DIAMBIL! ✅✅✅");
-        console.log("Salin semua teks di bawah ini (mulai dari 'data:image/png...') dan tempel di address bar browser Anda untuk melihat QR Code:\n");
         
-        // Mencetak data URL ke log agar bisa disalin oleh pengguna
-        console.log(qrCodeDataUrl);
+        console.log(`   ✅ Login berhasil. URL saat ini: ${page.url()}`);
+
+        console.log(`5. Menavigasi ke halaman WhatsApp Bots: ${BOTS_PAGE_URL}`);
+        await page.goto(BOTS_PAGE_URL, { waitUntil: 'networkidle0' });
+
+        console.log("6. Mengklik tombol 'Tambah WhatsApp'...");
+        await page.waitForSelector('#addBotBtn', { timeout: 15000 });
+        await page.click('#addBotBtn');
+        
+        console.log("7. Mengklik tombol 'Lanjut' dan menunggu respons API...");
+        const [response] = await Promise.all([
+            page.waitForResponse(res => res.url() === API_URL && res.request().method() === 'POST'),
+            page.click('#addBotSubmit'),
+        ]);
+        
+        const result = await response.json();
+
+        if (result.error === '0' && result.msg) {
+            const qr_data_url = result.msg;
+            const session_name = result.session;
+            console.log("\n\n✅✅✅ QR CODE BERHASIL DIAMBIL! ✅✅✅");
+            console.log(`   Session ID: ${session_name}`);
+            console.log("   Salin semua teks di bawah ini dan tempel di address bar browser Anda:\n");
+            console.log(qr_data_url);
+        } else {
+            throw new Error(`Gagal mendapatkan QR Code dari API. Pesan: ${result.msg}`);
+        }
 
     } catch (error) {
         console.error("❌ Terjadi error selama proses:", error.message);
-        // Ambil screenshot jika terjadi error untuk debugging
-        if (browser && page) {
+        if (page) {
             await page.screenshot({ path: 'error_screenshot.png' });
             console.log("   Screenshot error disimpan sebagai 'error_screenshot.png'");
         }
