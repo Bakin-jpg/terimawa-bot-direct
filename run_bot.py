@@ -2,7 +2,7 @@ import requests
 import re
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 import time
-import os # <-- Tambahkan ini untuk mengakses environment variables
+import os
 
 # --- KONFIGURASI ---
 LOGIN_PAGE_URL = "https://app.terimawa.com/login"
@@ -10,8 +10,6 @@ BOTS_PAGE_URL = "https://app.terimawa.com/bots"
 API_URL = "https://app.terimawa.com/api/bots"
 
 # --- MENGAMBIL KREDENSIAL DARI GITHUB SECRETS ---
-# Kode ini akan membaca environment variable yang kita atur di workflow YAML.
-# Ini jauh lebih aman daripada menulis password langsung di dalam kode.
 CREDENTIALS = {
     "username": os.getenv("TERIMAWA_USERNAME"),
     "password": os.getenv("TERIMAWA_PASSWORD")
@@ -33,8 +31,12 @@ def login_and_get_authenticated_session(playwright):
 
     try:
         page.goto(LOGIN_PAGE_URL, timeout=60000)
+        
+        # --- PERBAIKAN DI SINI ---
+        # Menggunakan kurung siku [] untuk mengakses dictionary
         page.fill('input[name="username"]', CREDENTIALS["username"])
         page.fill('input[name="password"]', CREDENTIALS["password"])
+        # -------------------------
         
         with page.expect_navigation(timeout=30000):
             page.click('button[type="submit"]')
@@ -148,15 +150,11 @@ if __name__ == "__main__":
     print("Memulai bot...")
     
     # --- CONTOH PENGGUNAAN ---
-    # Anda bisa meng-uncomment salah satu fungsi di bawah ini
-    # atau membuat logika baru untuk menerima input.
-
-    # 1. Untuk mendapatkan QR Code, jalankan fungsi ini.
+    # Saat ini skrip akan mencoba mendapatkan QR Code.
+    # Jika ingin Pairing Code, beri komentar pada get_qr_code() dan hapus komentar pada get_pairing_code()
     get_qr_code()
 
-    print("\n" + "="*60 + "\n")
+    # print("\n" + "="*60 + "\n")
     
-    # 2. Untuk mendapatkan Pairing Code, ganti nomornya lalu jalankan.
-    # Ingat: hanya salah satu fungsi yang bisa berjalan dalam satu waktu.
     # phone_number_for_pairing = "6281234567890" # <-- Ganti dengan nomor yang valid
     # get_pairing_code(phone_number_for_pairing)
