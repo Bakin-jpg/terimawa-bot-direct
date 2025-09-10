@@ -1,10 +1,21 @@
-name: Get Terimawa QR Code (Node.js)
+name: Terimawa Bot Actions
 
 on:
   workflow_dispatch:
+    inputs:
+      action:
+        description: 'Aksi yang akan dijalankan (get_qr, get_pairing_code, start_blast, stop_blast)'
+        required: true
+        default: 'get_qr'
+      bot_id:
+        description: 'ID Bot WhatsApp (hanya untuk start/stop blast)'
+        required: false
+      phone_number:
+        description: 'Nomor telepon (hanya untuk get_pairing_code)'
+        required: false
 
 jobs:
-  run-puppeteer:
+  run-bot:
     runs-on: ubuntu-latest
 
     steps:
@@ -22,5 +33,15 @@ jobs:
       - name: Run the bot script
         run: node bot.js
         env:
+          # Mengambil kredensial dari GitHub Secrets
           TERIMAWA_USERNAME: ${{ secrets.TERIMAWA_USERNAME }}
           TERIMAWA_PASSWORD: ${{ secrets.TERIMAWA_PASSWORD }}
+          
+          # URL untuk mengirim hasil ke shared hosting Anda
+          CALLBACK_URL: ${{ secrets.CALLBACK_URL }}
+          CALLBACK_SECRET: ${{ secrets.CALLBACK_SECRET }}
+          
+          # Mengambil input dari pemicu workflow
+          ACTION: ${{ github.event.inputs.action }}
+          BOT_ID: ${{ github.event.inputs.bot_id }}
+          PHONE_NUMBER: ${{ github.event.inputs.phone_number }}
