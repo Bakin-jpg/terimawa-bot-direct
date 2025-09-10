@@ -1,4 +1,4 @@
-# Versi Final v2.1 - Menggabungkan semua perbaikan
+# Versi Final v2.2 - Memperbaiki IndentationError
 import requests
 import re
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
@@ -7,7 +7,6 @@ import os
 
 # --- KONFIGURASI ---
 LOGIN_PAGE_URL = "https://app.terimawa.com/login"
-# URL tujuan SETELAH login berhasil (sesuai info Anda)
 SUCCESS_URL_REDIRECT = "https://app.terimawa.com/"
 BOTS_PAGE_URL = "https://app.terimawa.com/bots"
 API_URL = "https://app.terimawa.com/api/bots"
@@ -45,7 +44,6 @@ def login_and_get_authenticated_session(playwright):
         print(f"   Menunggu pengalihan ke {SUCCESS_URL_REDIRECT}...")
         page.wait_for_url(SUCCESS_URL_REDIRECT, timeout=30000)
         
-        # Cek sekali lagi untuk memastikan tidak kembali ke halaman login
         if "/login" in page.url():
              raise Exception("Gagal login, kemungkinan username atau password salah atau ada halaman verifikasi.")
 
@@ -108,6 +106,66 @@ def get_qr_code():
 
 def get_pairing_code(phone_number):
     """
+    Fungsi untuk mengambil Pairing Code.
+    """
+    print("\n====== Memulai Proses Pengambilan Pairing Code ======")
+    with sync_playwright() as p:
+        page, browser = login_and_get_authenticated_session(p)
+        if not page:
+            return
+
+        try:
+            print(f"2. Menavigasi ke halaman WhatsApp Bots...")
+            page.goto(BOTS_PAGE_URL, timeout=60000)
+
+            print("3. Mengklik tombol 'Tambah WhatsApp'...")
+            page.click('#addBotBtn')
+
+            print("4. Memilih metode 'Pairing Code' dan mengisi nomor telepon...")
+            page.click('input[name="connectionMethod"][value="pairing"]')
+            page.fill('#phoneNumber', phone_number)
+            
+            print("5. Mengklik tombol 'Lanjut' untuk metode Pairing Code...")
+            with page.expect_response(API_URL) as response_info:
+                page.click('#addBotSubmit')
+            
+            response = response_info.value
+            result = response.json()
+
+            if result.get("error") == "0" and result.get("msg"):
+                pairing_code = result["msg"]
+                session_name = result.get("session")
+                formatted_code = f"{pairing_code[:4]}-{pairing_code[4:]}" if len(pairing_code) == 8 else pairing_code
+                print("\n   ✅ Pairing Code Berhasil Didapatkan!")
+                print(f"   Session ID: {session_name}")
+                print("   ---------------------------------------------------------------")
+                print(f"   Kode Pairing Anda: {formatted_code}")
+                print("   ---------------------------------------------------------------")
+            else:
+                print(f"\n   ❌ GAGAL: {result.get('msg', 'Error tidak diketahui dari API.')}")
+        
+        except PlaywrightTimeoutError as e:
+            print(f"\n   ❌ GAGAL: Proses timeout. Mungkin halaman terlalu lama dimuat atau selector tidak ditemukan. Error: {e}")
+        except Exception as e:
+            print(f"\n   ❌ Terjadi error tak terduga: {e}")
+            if page:
+                page.screenshot(path='error_screenshot.png')
+                print("   Screenshot error disimpan sebagai 'error_screenshot.png'.")
+        finally:
+            if browser:
+                print("6. Menutup browser...")
+                browser.close()
+
+if __name__ == "__main__":
+    print("Memulai bot...")
+    
+    # --- PENGATURAN EKSEKUSI ---
+    get_qr_code()
+    
+    # print("\n" + "="*60 + "\n")
+    
+    # phone_number_for_pairing = "6281234567890" # <-- Ganti dengan nomor yang valid
+    # get_pairing_code(phone_number_for_pairing)    """
     Fungsi untuk mengambil Pairing Code.
     """
     print("\n====== Memulai Proses Pengambilan Pairing Code ======")
