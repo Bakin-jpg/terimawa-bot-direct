@@ -1,26 +1,31 @@
-name: Get Terimawa QR Code
+name: Run Terimawa Python Bot
 
 on:
   workflow_dispatch: # Memungkinkan kita menjalankan skrip secara manual
 
 jobs:
-  run-bot:
+  run-playwright:
     runs-on: ubuntu-latest
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v3
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
         with:
-          node-version: '18'
+          python-version: '3.10' # Versi Python yang stabil
 
-      - name: Install dependencies
-        run: npm install
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright browsers and dependencies
+        run: |
+          playwright install --with-deps
+          # Perintah --with-deps akan menginstal semua library sistem yang dibutuhkan
 
       - name: Run the bot script
-        run: node bot.js
+        run: python run_bot.py
         env:
           # Mengambil kredensial dari GitHub Secrets
           TERIMAWA_USERNAME: ${{ secrets.TERIMAWA_USERNAME }}
