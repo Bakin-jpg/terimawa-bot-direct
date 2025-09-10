@@ -1,0 +1,13 @@
+{
+  "name": "terimawa-bot-direct",
+  "version": "1.0.0",
+  "description": "Bot untuk Terimawa",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "dependencies": {
+    "puppeteer-core": "^21.5.0",
+    "@sparticuz/chromium": "^119.0.0"
+  }
+}
