@@ -15,7 +15,8 @@ const {
     CALLBACK_SECRET,
     ACTION,
     BOT_ID,
-    PHONE_NUMBER
+    PHONE_NUMBER,
+    CALLBACK_EXTRA_DATA // Ini adalah session_id unik dari PHP
 } = process.env;
 
 // --- FUNGSI UTAMA (ROUTER) ---
@@ -27,19 +28,12 @@ async function main() {
 
     console.log(`🚀 Menjalankan aksi: ${ACTION || 'Tidak ada aksi'}`);
 
+    // Kita akan fokus pada get_qr untuk sekarang
     switch (ACTION) {
         case 'get_qr':
             await getQrCode();
             break;
-        case 'get_pairing_code':
-            await getPairingCode(PHONE_NUMBER);
-            break;
-        case 'start_blast':
-            await controlBlast(BOT_ID, 'start');
-            break;
-        case 'stop_blast':
-            await controlBlast(BOT_ID, 'stop');
-            break;
+        // Aksi lain bisa ditambahkan di sini nanti
         default:
             console.error(`❌ Aksi tidak dikenal atau tidak disediakan: ${ACTION}`);
             process.exit(1);
@@ -50,19 +44,24 @@ async function main() {
 async function loginAndGetPage(browser) {
     const page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+    
     console.log(`2. Membuka halaman login: ${LOGIN_PAGE_URL}`);
     await page.goto(LOGIN_PAGE_URL, { waitUntil: 'networkidle0', timeout: 60000 });
+    
     console.log("3. Mengisi form login...");
     await page.type('input[name="username"]', TERIMAWA_USERNAME);
     await page.type('input[name="password"]', TERIMAWA_PASSWORD);
+
     console.log("4. Mengklik tombol login...");
     await Promise.all([
         page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 30000 }),
         page.click('button[type="submit"]')
     ]);
+
     if (!page.url().startsWith(SUCCESS_URL_REDIRECT)) {
         throw new Error(`Gagal login. URL saat ini: ${page.url()}.`);
     }
+    
     console.log(`   ✅ Login berhasil. URL saat ini: ${page.url()}`);
     return page;
 }
@@ -71,25 +70,34 @@ async function loginAndGetPage(browser) {
 async function sendResultToCallback(payload) {
     if (!CALLBACK_URL || !CALLBACK_SECRET) {
         console.error("❌ Error: CALLBACK_URL dan CALLBACK_SECRET diperlukan untuk mengirim hasil.");
-        // Kita tidak menghentikan proses, hanya memberi peringatan di log
-        return;
+        return; // Keluar dari fungsi jika URL callback tidak ada
     }
     
     console.log(`8. Mengirim hasil ke callback URL: ${CALLBACK_URL}`);
-    const callbackPayload = { ...payload, secret: CALLBACK_SECRET };
     
-    const callbackResponse = await fetch(CALLBACK_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(callbackPayload)
-    });
+    // Gabungkan payload utama dengan secret dan data tambahan (session_id)
+    const callbackPayload = { 
+        ...payload, 
+        secret: CALLBACK_SECRET,
+        callbackExtraData: CALLBACK_EXTRA_DATA // Kirim kembali session_id
+    };
     
-    if (callbackResponse.ok) {
-        console.log("   ✅ Berhasil mengirim data ke shared hosting.");
-    } else {
-        const errorText = await callbackResponse.text();
-        // Log error tapi jangan hentikan eksekusi
-        console.error(`Gagal mengirim data. Status: ${callbackResponse.status}. Pesan: ${errorText}`);
+    try {
+        const callbackResponse = await fetch(CALLBACK_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(callbackPayload)
+        });
+        
+        if (callbackResponse.ok) {
+            console.log("   ✅ Berhasil mengirim data ke shared hosting.");
+        } else {
+            const errorText = await callbackResponse.text();
+            throw new Error(`Gagal mengirim data. Status: ${callbackResponse.status}. Pesan: ${errorText}`);
+        }
+    } catch (error) {
+        // Log error tapi jangan hentikan eksekusi utama jika hanya callback yang gagal
+        console.error("   ⚠️ Peringatan: Gagal mengirim data ke shared hosting.", error.message);
     }
 }
 
@@ -100,19 +108,26 @@ async function getQrCode() {
         console.log("1. Meluncurkan browser...");
         browser = await puppeteer.launch({ executablePath: await chromium.executablePath(), args: chromium.args, headless: chromium.headless });
         const page = await loginAndGetPage(browser);
+        
         console.log(`5. Menavigasi ke halaman WhatsApp Bots...`);
         await page.goto(BOTS_PAGE_URL, { waitUntil: 'networkidle0' });
+        
         console.log("6. Mengklik 'Tambah WhatsApp'...");
         await page.waitForSelector('#addBotBtn', { timeout: 15000 });
         await page.click('#addBotBtn');
+        
         console.log("7. Mengklik 'Lanjut' (metode QR)...");
         const [response] = await Promise.all([
             page.waitForResponse(res => res.url() === API_URL && res.request().method() === 'POST'),
             page.click('#addBotSubmit'),
         ]);
+        
         const result = await response.json();
+        
         if (result.error === '0' && result.msg) {
-            console.log("\n✅ QR Code Berhasil Didapatkan!");
+            console.log("\n✅ QR Code Berhasil Didapatkan di GitHub!");
+            
+            // Kirim hasilnya ke server PHP Anda
             await sendResultToCallback({
                 type: 'qr',
                 qrCode: result.msg,
@@ -121,100 +136,15 @@ async function getQrCode() {
         } else {
             throw new Error(`Gagal mendapatkan QR Code dari API. Pesan: ${result.msg}`);
         }
+
     } catch (error) {
         console.error("❌ Terjadi error saat proses get_qr:", error.message);
+        // Kirim notifikasi error ke server Anda jika terjadi kesalahan
+        await sendResultToCallback({ type: 'error', message: error.message });
         process.exit(1);
     } finally {
         if (browser) {
             console.log("\n9. Menutup browser...");
-            await browser.close();
-        }
-    }
-}
-
-// --- FUNGSI UNTUK MENGAMBIL PAIRING CODE ---
-async function getPairingCode(phoneNumber) {
-    if (!phoneNumber) {
-        console.error("❌ Error: Nomor telepon diperlukan untuk aksi get_pairing_code.");
-        process.exit(1);
-    }
-    let browser = null;
-    try {
-        console.log("1. Meluncurkan browser...");
-        browser = await puppeteer.launch({ executablePath: await chromium.executablePath(), args: chromium.args, headless: chromium.headless });
-        const page = await loginAndGetPage(browser);
-        console.log(`5. Menavigasi ke halaman WhatsApp Bots...`);
-        await page.goto(BOTS_PAGE_URL, { waitUntil: 'networkidle0' });
-        console.log("6. Mengklik 'Tambah WhatsApp'...");
-        await page.waitForSelector('#addBotBtn', { timeout: 15000 });
-        await page.click('#addBotBtn');
-        console.log("7. Memilih metode 'Pairing Code' dan mengisi nomor...");
-        await page.click('input[name="connectionMethod"][value="pairing"]');
-        await page.type('#phoneNumber', phoneNumber);
-        console.log("8. Mengklik 'Lanjut' dan menunggu respons API...");
-        const [response] = await Promise.all([
-            page.waitForResponse(res => res.url() === API_URL && res.request().method() === 'POST'),
-            page.click('#addBotSubmit'),
-        ]);
-        const result = await response.json();
-        if (result.error === '0' && result.msg) {
-            console.log("\n✅ Pairing Code Berhasil Didapatkan!");
-            await sendResultToCallback({
-                type: 'pairing',
-                pairingCode: result.msg,
-                sessionId: result.session
-            });
-        } else {
-            throw new Error(`Gagal mendapatkan Pairing Code dari API. Pesan: ${result.msg}`);
-        }
-    } catch (error) {
-        console.error("❌ Terjadi error saat proses get_pairing_code:", error.message);
-        process.exit(1);
-    } finally {
-        if (browser) {
-            console.log("\n9. Menutup browser...");
-            await browser.close();
-        }
-    }
-}
-
-// --- FUNGSI UNTUK MENGONTROL BLAST (START/STOP) ---
-async function controlBlast(botId, action) {
-    if (!botId) {
-        console.error("❌ Error: BOT_ID diperlukan untuk aksi ini.");
-        process.exit(1);
-    }
-    console.log(`Memulai aksi '${action}' untuk bot ID: ${botId}`);
-    let browser = null;
-    try {
-        console.log("1. Meluncurkan browser dan login...");
-        browser = await puppeteer.launch({ executablePath: await chromium.executablePath(), args: chromium.args, headless: chromium.headless });
-        const page = await loginAndGetPage(browser);
-        console.log(`5. Menavigasi ke halaman /bots untuk mencari bot...`);
-        await page.goto(BOTS_PAGE_URL, { waitUntil: 'networkidle0' });
-        
-        let buttonSelector;
-        let actionText = action === 'start' ? 'Mulai Blast' : 'Stop Blast';
-        if (action === 'start') {
-            buttonSelector = `button[onclick*="updateBotSending(${botId}, '1')"]`;
-        } else {
-            buttonSelector = `button[onclick*="updateBotSending(${botId}, '0')"]`;
-        }
-        
-        console.log(`6. Mencari tombol '${actionText}'...`);
-        await page.waitForSelector(buttonSelector, { timeout: 15000 });
-        
-        console.log(`7. Mengklik tombol '${actionText}'...`);
-        await page.click(buttonSelector);
-        await page.waitForTimeout(2000); 
-
-        console.log(`   ✅ Aksi '${action}' berhasil dipicu untuk bot ${botId}.`);
-    } catch (error) {
-        console.error(`❌ Terjadi error saat menjalankan aksi '${action}':`, error.message);
-        process.exit(1);
-    } finally {
-        if (browser) {
-            console.log("\n8. Menutup browser...");
             await browser.close();
         }
     }
