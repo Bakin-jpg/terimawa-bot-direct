@@ -1,215 +1,152 @@
-const puppeteer = require('puppeteer-core');
-const chromium = require('@sparticuz/chromium');
+<?php
+/**
+ * =================================================================
+ * API.PHP (VERSI BARU - POLLING BERBASIS FILE)
+ * =================================================================
+ * File ini memiliki DUA FUNGSI UTAMA:
+ *
+ * 1. JIKA DIPANGGIL DENGAN METODE 'POST' (oleh bot.js):
+ *    - Bertindak sebagai CALLBACK.
+ *    - Menerima data (QR, Pairing, status, error) dari bot.
+ *    - MENULIS status ke sebuah file sementara yang unik (e.g., status_files/sess_xxx.json).
+ *    - HANYA jika status 'connected', ia akan MENULIS ke database.
+ *
+ * 2. JIKA DIPANGGIL DENGAN METODE 'GET' (oleh index.php):
+ *    - Bertindak sebagai PEMERIKSA STATUS (Polling).
+ *    - MEMBACA file status sementara yang sesuai.
+ *    - Mengirimkan isinya ke JavaScript dan kemudian menghapus file tersebut.
+ * =================================================================
+ */
 
-// --- KONFIGURASI APLIKASI ---
-const LOGIN_PAGE_URL = "https://app.terimawa.com/login";
-const SUCCESS_URL_REDIRECT = "https://app.terimawa.com/";
-const BOTS_PAGE_URL = "https://app.terimawa.com/bots";
+// Selalu set header ke JSON karena file ini adalah API
+header('Content-Type: application/json');
 
-// --- AMBIL SEMUA VARIABEL DARI ENVIRONMENT (WORKFLOW) ---
-const {
-    TERIMAWA_USERNAME,
-    TERIMAWA_PASSWORD,
-    CALLBACK_URL,
-    CALLBACK_SECRET,
-    ACTION,
-    PHONE_NUMBER,
-    DB_ACCOUNT_ID
-} = process.env;
+// Selalu butuh koneksi database
+require_once 'db.php';
 
+// Definisikan direktori untuk menyimpan file status sementara
+define('STATUS_DIR', __DIR__ . '/status_files/');
 
-// --- FUNGSI UTAMA (ROUTER) ---
-async function main() {
-    if (!TERIMAWA_USERNAME || !TERIMAWA_PASSWORD) {
-        await sendResultToCallback({ status: 'error', message: 'Kredensial TerimaWA tidak diatur.' });
-        process.exit(1);
-    }
-    if (!DB_ACCOUNT_ID && (ACTION === 'get_qr' || ACTION === 'get_pairing_code')) {
-        await sendResultToCallback({ status: 'error', message: 'DB Account ID tidak ditemukan.' });
-        process.exit(1);
-    }
-    console.log(`🚀 Menjalankan aksi: ${ACTION}`);
-    switch (ACTION) {
-        case 'get_qr':
-            await getQr();
-            break;
-        case 'get_pairing_code':
-            await getPairing(PHONE_NUMBER);
-            break;
-        default:
-            const errorMsg = `Aksi tidak dikenal: ${ACTION}`;
-            if (DB_ACCOUNT_ID) await sendResultToCallback({ status: 'error', message: errorMsg });
-            process.exit(1);
-    }
-}
-
-// --- FUNGSI HELPER ---
-async function launchBrowser() {
-    console.log("1. Meluncurkan browser...");
-    return await puppeteer.launch({
-        args: chromium.args,
-        defaultViewport: chromium.defaultViewport,
-        executablePath: await chromium.executablePath(),
-        headless: chromium.headless,
-    });
-}
-
-async function loginAndGetPage(browser) {
-    const page = await browser.newPage();
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36');
-    console.log(`2. Membuka halaman login: ${LOGIN_PAGE_URL}`);
-    await page.goto(LOGIN_PAGE_URL, { waitUntil: 'networkidle0', timeout: 60000 });
-    console.log("3. Mengisi form login...");
-    await page.type('input[name="username"]', TERIMAWA_USERNAME);
-    await page.type('input[name="password"]', TERIMAWA_PASSWORD);
-    console.log("4. Mengklik tombol login...");
-    await Promise.all([
-        page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 30000 }),
-        page.click('button[type="submit"]')
-    ]);
-    if (!page.url().startsWith(SUCCESS_URL_REDIRECT)) {
-        throw new Error(`Gagal login. URL saat ini: ${page.url()}`);
-    }
-    console.log(`   ✅ Login berhasil.`);
-    return page;
-}
-
-async function sendResultToCallback(payload) {
-    if (!CALLBACK_URL || !CALLBACK_SECRET) {
-        console.log("⚠️ Peringatan: CALLBACK_URL/SECRET tidak diatur.", JSON.stringify(payload));
-        return;
-    }
-    console.log(`-> Mengirim hasil ke callback URL: ${CALLBACK_URL}`);
-    const callbackPayload = { ...payload, secret: CALLBACK_SECRET, db_account_id: DB_ACCOUNT_ID };
-    try {
-        const response = await fetch(CALLBACK_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(callbackPayload)
-        });
-        if (response.ok) console.log("   ✅ Berhasil mengirim data ke server Anda.");
-        else throw new Error(`Status: ${response.status}. Pesan: ${await response.text()}`);
-    } catch (error) {
-        console.error("   ❌ GAGAL mengirim data ke server Anda:", error.message);
+// Cek dan buat direktori jika belum ada
+if (!is_dir(STATUS_DIR)) {
+    // Coba buat direktori, @ untuk menekan warning jika direktori sudah ada (race condition)
+    if (!@mkdir(STATUS_DIR, 0755, true) && !is_dir(STATUS_DIR)) {
+        http_response_code(500);
+        echo json_encode(['status' => 'error', 'message' => 'Gagal membuat direktori status. Periksa izin folder.']);
+        exit;
     }
 }
 
 // =========================================================================
-// FUNGSI BARU DAN AKURAT
+// BAGIAN 1: LOGIKA CALLBACK (Jika permintaan adalah POST dari bot.js)
 // =========================================================================
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    
+    // Ambil 'secret key' dari environment atau definisikan di sini
+    $expected_secret = getenv('CALLBACK_SECRET') ?: 'RAHASIA_SUPER_AMAN_12345'; // WAJIB GANTI DENGAN SECRET ANDA
 
-async function getQr() {
-    let browser = null;
-    try {
-        browser = await launchBrowser();
-        const page = await loginAndGetPage(browser);
+    // Ambil data mentah yang dikirim oleh bot.js
+    $input_json = file_get_contents('php://input');
+    $data = json_decode($input_json, true);
 
-        console.log(`5. Menavigasi ke halaman Bots: ${BOTS_PAGE_URL}`);
-        await page.goto(BOTS_PAGE_URL, { waitUntil: 'networkidle0' });
-        console.log("   Halaman bots berhasil dimuat.");
-
-        console.log("6. Mengklik tombol 'Tambah WhatsApp'...");
-        const addButtonXPath = "//button[@id='addBotBtn']";
-        await page.waitForXPath(addButtonXPath);
-        const [addButton] = await page.$x(addButtonXPath);
-        await addButton.click();
-
-        console.log("7. Menunggu modal pilihan metode muncul...");
-        await page.waitForSelector('#addBotModal:not(.hidden)');
-        
-        // Radio button QR sudah terpilih secara default, jadi kita langsung klik Lanjut
-        console.log("8. Metode QR sudah default, mengklik tombol 'Lanjut'...");
-        const submitButtonXPath = "//button[@id='addBotSubmit']";
-        await page.waitForXPath(submitButtonXPath);
-        const [submitButton] = await page.$x(submitButtonXPath);
-        await submitButton.click();
-
-        console.log("9. Menunggu modal QR Code muncul...");
-        // Berdasarkan inspect element, modal QR memiliki gambar dengan id 'qrCodeImage'
-        const qrImageSelector = 'img#qrCodeImage';
-        await page.waitForSelector(qrImageSelector, { timeout: 60000, visible: true }); // Tunggu hingga 60 detik dan terlihat
-        
-        const qrCodeSrc = await page.$eval(qrImageSelector, img => img.src);
-
-        if (!qrCodeSrc || !qrCodeSrc.startsWith('data:image')) {
-            throw new Error('Gagal mendapatkan data base64 dari QR Code.');
-        }
-
-        console.log("   ✅ QR Code berhasil didapatkan.");
-        await sendResultToCallback({ status: 'success', type: 'qr', data: qrCodeSrc });
-
-    } catch (error) {
-        console.error("❌ Terjadi error saat proses QR:", error.message);
-        await sendResultToCallback({ status: 'error', message: error.message || 'Gagal total saat proses QR.' });
-    } finally {
-        if (browser) await browser.close();
+    // Validasi Keamanan & Data Penting
+    if (
+        !$data ||
+        !isset($data['secret']) ||
+        $data['secret'] !== $expected_secret ||
+        !isset($data['session_id']) ||
+        !isset($data['user_id'])
+    ) {
+        http_response_code(403); // Forbidden
+        echo json_encode(['status' => 'error', 'message' => 'Akses ditolak atau data tidak lengkap.']);
+        exit;
     }
+
+    $session_id = $data['session_id'];
+    $user_id = $data['user_id'];
+    
+    // Keamanan: Pastikan session_id tidak mengandung karakter aneh (mencegah path traversal)
+    if (preg_match('/[^a-zA-Z0-9_.]/', $session_id)) {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'message' => 'Format Session ID tidak valid.']);
+        exit;
+    }
+    
+    $filename = STATUS_DIR . $session_id . '.json';
+
+    // Jika bot berhasil terhubung sepenuhnya, baru kita INSERT ke database
+    if (isset($data['type']) && $data['type'] === 'connected') {
+        try {
+            // HANYA saat 'connected' kita menulis ke database
+            $stmt = $pdo->prepare(
+                "INSERT INTO whatsapp_accounts (user_id, phone_number, status, terimawa_bot_id) VALUES (?, ?, 'active', ?)"
+            );
+            $stmt->execute([
+                $user_id,
+                $data['phone_number'] ?? null,
+                $data['bot_id'] ?? null
+            ]);
+        } catch (PDOException $e) {
+            // Jika gagal insert, ubah data menjadi pesan error untuk disimpan ke file
+            $data = [
+                'status' => 'error',
+                'message' => 'Koneksi WA berhasil, tetapi gagal menyimpan ke database. Hubungi admin.'
+            ];
+            error_log("Database INSERT Error on api.php (POST): " . $e->getMessage());
+        }
+    }
+    
+    // Apapun hasilnya (qr, pairing, connected, error), simpan status ke file sementara
+    // agar proses polling di frontend bisa membacanya.
+    file_put_contents($filename, json_encode($data));
+    
+    http_response_code(200);
+    echo json_encode(['status' => 'ok', 'message' => 'Callback diterima.']);
+    exit;
 }
 
-async function getPairing(phoneNumber) {
-    if (!phoneNumber) {
-        await sendResultToCallback({ status: 'error', message: 'Nomor HP wajib untuk pairing code.' });
-        return;
+// =========================================================================
+// BAGIAN 2: LOGIKA POLLING (Jika permintaan adalah GET dari index.php)
+// =========================================================================
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['action'] === 'check_status') {
+    
+    session_start();
+
+    // Validasi Keamanan & Input
+    if (!isset($_SESSION['loggedin']) || !isset($_GET['session_id'])) {
+        http_response_code(403);
+        echo json_encode(['status' => 'error', 'message' => 'Akses tidak sah atau session_id tidak ditemukan.']);
+        exit;
     }
 
-    let browser = null;
-    try {
-        browser = await launchBrowser();
-        const page = await loginAndGetPage(browser);
+    $session_id = $_GET['session_id'];
 
-        console.log(`5. Menavigasi ke halaman Bots: ${BOTS_PAGE_URL}`);
-        await page.goto(BOTS_PAGE_URL, { waitUntil: 'networkidle0' });
-        console.log("   Halaman bots berhasil dimuat.");
-
-        console.log("6. Mengklik tombol 'Tambah WhatsApp'...");
-        const addButtonXPath = "//button[@id='addBotBtn']";
-        await page.waitForXPath(addButtonXPath);
-        const [addButton] = await page.$x(addButtonXPath);
-        await addButton.click();
-
-        console.log("7. Menunggu modal pilihan metode muncul...");
-        await page.waitForSelector('#addBotModal:not(.hidden)');
-        
-        console.log("8. Memilih metode 'Pairing Code'...");
-        const pairingRadioButtonXPath = "//input[@name='connectionMethod' and @value='pairing']";
-        await page.waitForXPath(pairingRadioButtonXPath);
-        const [pairingRadioButton] = await page.$x(pairingRadioButtonXPath);
-        await pairingRadioButton.click();
-        
-        console.log(`9. Memasukkan nomor HP: ${phoneNumber}`);
-        await page.waitForSelector('input#phoneNumber', { visible: true });
-        await page.type('input#phoneNumber', phoneNumber);
-
-        console.log("10. Mengklik tombol 'Lanjut'...");
-        const submitButtonXPath = "//button[@id='addBotSubmit']";
-        await page.waitForXPath(submitButtonXPath);
-        const [submitButton] = await page.$x(submitButtonXPath);
-        await submitButton.click();
-
-        console.log("11. Menunggu modal Pairing Code muncul...");
-        // Berdasarkan inspect element, modal pairing memiliki div dengan font-mono
-        const pairingCodeXPath = "//div[contains(@class, 'font-mono')]";
-        await page.waitForXPath(pairingCodeXPath, { timeout: 60000, visible: true });
-        
-        const [pairingCodeElement] = await page.$x(pairingCodeXPath);
-        if (!pairingCodeElement) throw new Error('Elemen pairing code tidak ditemukan.');
-        
-        const pairingCodeText = await page.evaluate(el => el.textContent.trim(), pairingCodeElement);
-
-        if (!pairingCodeText) {
-            throw new Error('Gagal mendapatkan teks Pairing Code.');
-        }
-
-        console.log(`   ✅ Pairing Code didapatkan: ${pairingCodeText}`);
-        await sendResultToCallback({ status: 'success', type: 'pairing_code', data: pairingCodeText });
-
-    } catch (error) {
-        console.error("❌ Terjadi error saat proses Pairing:", error.message);
-        await sendResultToCallback({ status: 'error', message: error.message || 'Gagal total saat proses Pairing.' });
-    } finally {
-        if (browser) await browser.close();
+    // Keamanan: Validasi format session_id
+    if (preg_match('/[^a-zA-Z0-9_.]/', $session_id)) {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'message' => 'Format Session ID tidak valid.']);
+        exit;
     }
+
+    $filename = STATUS_DIR . $session_id . '.json';
+    
+    if (file_exists($filename)) {
+        // Jika file ditemukan, baca isinya, kirim ke browser, lalu hapus
+        $content = file_get_contents($filename);
+        echo $content;
+        
+        // Hapus file setelah dibaca agar tidak menumpuk dan tidak dibaca lagi
+        unlink($filename);
+    } else {
+        // Jika file belum ada, berarti bot masih bekerja.
+        echo json_encode(['status' => 'pending']);
+    }
+    exit;
 }
 
-// --- JALANKAN FUNGSI UTAMA ---
-main();
+// =========================================================================
+// JIKA TIDAK ADA KONDISI YANG COCOK
+// =========================================================================
+http_response_code(404);
+echo json_encode(['error' => 'Endpoint tidak ditemukan.']);
+?>```
