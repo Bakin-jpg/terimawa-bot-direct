@@ -1,52 +1,94 @@
-name: Terimawa Bot Actions
+# Nama Workflow yang akan tampil di tab "Actions" di GitHub
+name: Bot TerimaWA
 
+# =========================================================================
+# TRIGGER
+# 'workflow_dispatch' berarti workflow ini hanya berjalan ketika dipicu
+# secara manual atau melalui API, yang mana inilah yang dilakukan oleh
+# trigger.php kita.
+# =========================================================================
 on:
   workflow_dispatch:
+    # Definisikan semua input yang bisa diterima oleh workflow ini.
+    # Ini akan muncul sebagai form jika dijalankan manual dari UI GitHub.
     inputs:
       action:
-        description: 'Aksi yang akan dijalankan (misal: get_qr)'
+        description: 'Aksi yang dijalankan (get_qr, get_pairing_code, start_blast, dll)'
         required: true
-        default: 'get_qr'
-      bot_id:
-        description: 'ID Bot WhatsApp (opsional)'
-        required: false
+        type: string
+
       phone_number:
-        description: 'Nomor telepon (opsional)'
+        description: 'Nomor HP untuk metode pairing code (contoh: 62812...)'
         required: false
-      # Input ini akan kita gunakan untuk mengirim ID unik dari PHP
-      callback_extra_data:
-        description: 'Data tambahan untuk dikirim balik ke callback, seperti session_id'
-        required: false
+        type: string
 
+      bot_id:
+        description: 'ID Bot dari TerimaWA untuk aksi start/stop blast'
+        required: false
+        type: string
+
+      db_account_id:
+        description: 'ID dari database web server untuk callback polling'
+        required: true # Dibuat wajib untuk memastikan callback selalu benar
+        type: string
+
+# =========================================================================
+# JOBS
+# Daftar pekerjaan yang akan dijalankan oleh workflow ini.
+# =========================================================================
 jobs:
-  run-bot:
+  run-bot-script:
+    # Nama Job yang akan tampil di log eksekusi
+    name: Menjalankan Skrip Bot
+    
+    # Gunakan runner terbaru yang disediakan oleh GitHub
     runs-on: ubuntu-latest
+    
+    # Definisikan environment variables yang akan tersedia untuk semua steps
+    # PENTING: Semua value di sini harus sudah Anda atur di
+    # Settings -> Secrets and variables -> Actions di repositori GitHub Anda.
+    env:
+      # Kredensial Login TerimaWA
+      TERIMAWA_USERNAME: ${{ secrets.TERIMAWA_USERNAME }}
+      TERIMAWA_PASSWORD: ${{ secrets.TERIMAWA_PASSWORD }}
+      
+      # URL dan Secret untuk Callback ke Server Anda
+      CALLBACK_URL: ${{ secrets.CALLBACK_URL }}
+      CALLBACK_SECRET: ${{ secrets.CALLBACK_SECRET }}
+      
+      # Ambil nilai dari input yang dikirim oleh trigger.php
+      ACTION: ${{ github.event.inputs.action }}
+      PHONE_NUMBER: ${{ github.event.inputs.phone_number }}
+      BOT_ID: ${{ github.event.inputs.bot_id }}
+      DB_ACCOUNT_ID: ${{ github.event.inputs.db_account_id }}
 
+    # Urutan langkah-langkah yang akan dijalankan oleh runner
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v3
+      # Langkah 1: Mengunduh (checkout) kode dari repositori Anda ke runner
+      - name: 1. Checkout Repositori
+        uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v3
+      # Langkah 2: Menyiapkan environment Node.js
+      - name: 2. Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20' # Gunakan versi LTS (Long-Term Support) yang stabil
+          
+      # Langkah 3: Setup cache untuk mempercepat instalasi
+      - name: 3. Cache NPM Dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm # Lokasi cache npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
 
-      - name: Install dependencies
-        run: npm install
-
-      - name: Run the bot script
+      # Langkah 4: Menginstal dependensi yang dibutuhkan oleh bot.js
+      - name: 4. Install Dependencies
+        run: npm install puppeteer-core @sparticuz/chromium
+        
+      # Langkah 5: Menjalankan skrip utama bot.js
+      # Semua variabel di bagian 'env' di atas akan bisa diakses oleh
+      # bot.js melalui 'process.env.NAMA_VARIABEL'
+      - name: 5. Jalankan Skrip Bot TerimaWA
         run: node bot.js
-        env:
-          # Mengambil kredensial dari GitHub Secrets
-          TERIMAWA_USERNAME: ${{ secrets.TERIMAWA_USERNAME }}
-          TERIMAWA_PASSWORD: ${{ secrets.TERIMAWA_PASSWORD }}
-          
-          # URL dan kunci rahasia untuk mengirim hasil ke shared hosting Anda
-          CALLBACK_URL: ${{ secrets.CALLBACK_URL }}
-          CALLBACK_SECRET: ${{ secrets.CALLBACK_SECRET }}
-          
-          # Mengambil input dari pemicu workflow
-          ACTION: ${{ github.event.inputs.action }}
-          BOT_ID: ${{ github.event.inputs.bot_id }}
-          PHONE_NUMBER: ${{ github.event.inputs.phone_number }}
-          CALLBACK_EXTRA_DATA: ${{ github.event.inputs.callback_extra_data }}
