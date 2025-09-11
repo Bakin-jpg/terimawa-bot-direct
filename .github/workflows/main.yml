@@ -13,7 +13,7 @@ on:
     # Ini akan muncul sebagai form jika dijalankan manual dari UI GitHub.
     inputs:
       action:
-        description: 'Aksi yang dijalankan (get_qr, get_pairing_code, start_blast, dll)'
+        description: 'Aksi yang dijalankan (get_qr, get_pairing_code)'
         required: true
         type: string
 
@@ -21,16 +21,20 @@ on:
         description: 'Nomor HP untuk metode pairing code (contoh: 62812...)'
         required: false
         type: string
-
-      bot_id:
-        description: 'ID Bot dari TerimaWA untuk aksi start/stop blast'
-        required: false
+        
+      # ===============================================================
+      # PERUBAHAN DI SINI
+      # ===============================================================
+      session_id:
+        description: 'ID Sesi unik dari trigger.php untuk callback polling'
+        required: true
         type: string
 
-      db_account_id:
-        description: 'ID dari database web server untuk callback polling'
-        required: true # Dibuat wajib untuk memastikan callback selalu benar
+      user_id:
+        description: 'ID Pengguna dari database yang meminta koneksi'
+        required: true
         type: string
+      # ===============================================================
 
 # =========================================================================
 # JOBS
@@ -56,11 +60,15 @@ jobs:
       CALLBACK_URL: ${{ secrets.CALLBACK_URL }}
       CALLBACK_SECRET: ${{ secrets.CALLBACK_SECRET }}
       
+      # ===============================================================
+      # PERUBAHAN DI SINI
       # Ambil nilai dari input yang dikirim oleh trigger.php
+      # ===============================================================
       ACTION: ${{ github.event.inputs.action }}
       PHONE_NUMBER: ${{ github.event.inputs.phone_number }}
-      BOT_ID: ${{ github.event.inputs.bot_id }}
-      DB_ACCOUNT_ID: ${{ github.event.inputs.db_account_id }}
+      SESSION_ID: ${{ github.event.inputs.session_id }}
+      USER_ID: ${{ github.event.inputs.user_id }}
+      # ===============================================================
 
     # Urutan langkah-langkah yang akan dijalankan oleh runner
     steps:
