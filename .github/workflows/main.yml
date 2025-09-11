@@ -4,91 +4,85 @@ name: Bot TerimaWA
 # =========================================================================
 # TRIGGER
 # 'workflow_dispatch' berarti workflow ini hanya berjalan ketika dipicu
-# secara manual atau melalui API, yang mana inilah yang dilakukan oleh
-# trigger.php kita.
+# secara manual atau melalui API.
 # =========================================================================
 on:
   workflow_dispatch:
-    # Definisikan semua input yang bisa diterima oleh workflow ini.
+    # Definisikan SEMUA input yang BISA diterima oleh workflow ini.
     inputs:
       action:
-        description: 'Aksi yang dijalankan (get_qr, get_pairing_code)'
+        description: 'Aksi yang dijalankan (get_qr, get_pairing_code, set_mode, set_blasting)'
         required: true
         type: string
 
-      phone_number:
-        description: 'Nomor HP untuk metode pairing code (contoh: 62812...)'
-        required: false
-        type: string
-        
-      # ===============================================================
-      # PERUBAHAN DI SINI: Kembali menggunakan db_account_id
-      # ===============================================================
       db_account_id:
-        description: 'ID dari tabel whatsapp_accounts untuk diupdate'
+        description: 'ID dari tabel whatsapp_accounts di database Anda'
         required: true
         type: string
-      # ===============================================================
+
+      # --- INPUT BARU UNTUK BOT BARU ---
+      phone_number:
+        description: 'Nomor HP untuk metode pairing code (contoh: 62812...)'
+        required: false # Tidak wajib, hanya untuk pairing
+        type: string
+        
+      # --- INPUT BARU UNTUK MANAJEMEN BOT ---
+      terimawa_bot_id:
+        description: 'ID Bot dari terimawa.com untuk dikelola'
+        required: false # Tidak wajib, hanya untuk manajemen
+        type: string
+        
+      value:
+        description: 'Nilai yang akan di-set (misal: mode "1", atau blast "1"/"0")'
+        required: false # Tidak wajib, hanya untuk manajemen
+        type: string
 
 # =========================================================================
 # JOBS
-# Daftar pekerjaan yang akan dijalankan oleh workflow ini.
 # =========================================================================
 jobs:
   run-bot-script:
-    # Nama Job yang akan tampil di log eksekusi
     name: Menjalankan Skrip Bot
-    
-    # Gunakan runner terbaru yang disediakan oleh GitHub
     runs-on: ubuntu-latest
     
-    # Definisikan environment variables yang akan tersedia untuk semua steps
-    # PENTING: Semua value di sini harus sudah Anda atur di
-    # Settings -> Secrets and variables -> Actions di repositori GitHub Anda.
+    # Definisikan environment variables yang akan tersedia untuk bot.js
+    # PENTING: Semua value di 'secrets' harus diatur di Settings -> Secrets -> Actions
     env:
       # Kredensial Login TerimaWA
       TERIMAWA_USERNAME: ${{ secrets.TERIMAWA_USERNAME }}
       TERIMAWA_PASSWORD: ${{ secrets.TERIMAWA_PASSWORD }}
       
-      # URL dan Secret untuk Callback ke Server Anda
+      # URL dan Secret untuk Callback
       CALLBACK_URL: ${{ secrets.CALLBACK_URL }}
       CALLBACK_SECRET: ${{ secrets.CALLBACK_SECRET }}
       
-      # ===============================================================
-      # PERUBAHAN DI SINI: Meneruskan input baru ke environment
-      # ===============================================================
+      # Meneruskan semua input dari trigger ke environment skrip
       ACTION: ${{ github.event.inputs.action }}
-      PHONE_NUMBER: ${{ github.event.inputs.phone_number }}
       DB_ACCOUNT_ID: ${{ github.event.inputs.db_account_id }}
-      # ===============================================================
+      PHONE_NUMBER: ${{ github.event.inputs.phone_number }}
+      TERIMAWA_BOT_ID: ${{ github.event.inputs.terimawa_bot_id }}
+      VALUE: ${{ github.event.inputs.value }}
 
-    # Urutan langkah-langkah yang akan dijalankan oleh runner
+    # Urutan langkah-langkah yang akan dijalankan
     steps:
-      # Langkah 1: Mengunduh (checkout) kode dari repositori Anda ke runner
       - name: 1. Checkout Repositori
         uses: actions/checkout@v4
 
-      # Langkah 2: Menyiapkan environment Node.js
       - name: 2. Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20' # Gunakan versi LTS (Long-Term Support) yang stabil
+          node-version: '20'
           
-      # Langkah 3: Setup cache untuk mempercepat instalasi
       - name: 3. Cache NPM Dependencies
         uses: actions/cache@v4
         with:
-          path: ~/.npm # Lokasi cache npm
+          path: ~/.npm
           key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-node-
 
-      # Langkah 4: Menginstal dependensi yang dibutuhkan oleh bot.js
       - name: 4. Install Dependencies
         run: npm install puppeteer-core @sparticuz/chromium
         
-      # Langkah 5: Menjalankan skrip utama bot.js
-      # Semua variabel di bagian 'env' di atas akan bisa diakses oleh
-      # bot.js melalui 'process.env.NAMA_VARIABEL'
       - name: 5. Jalankan Skrip Bot TerimaWA
         run: node bot.js
