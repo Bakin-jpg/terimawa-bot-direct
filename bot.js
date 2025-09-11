@@ -14,8 +14,7 @@ const {
     CALLBACK_SECRET,
     ACTION,
     PHONE_NUMBER,
-    SESSION_ID, // Variabel BARU pengganti DB_ACCOUNT_ID
-    USER_ID     // Variabel BARU untuk mengetahui pemilik akun
+    DB_ACCOUNT_ID // Variabel KUNCI untuk polling berbasis database
 } = process.env;
 
 
@@ -27,9 +26,10 @@ async function main() {
         console.error("❌ Error: Kredensial TERIMAWA_USERNAME atau TERIMAWA_PASSWORD tidak diatur.");
         process.exit(1);
     }
-     if (!SESSION_ID || !USER_ID) {
-        console.error("❌ Error: SESSION_ID atau USER_ID tidak diatur. Proses callback tidak akan berhasil.");
-        // Kita tidak mengirim callback di sini karena kita tidak tahu session_id nya
+     if (!DB_ACCOUNT_ID) {
+        // Kita tidak bisa mengirim callback error jika DB_ACCOUNT_ID tidak ada,
+        // jadi kita hanya log error di sini.
+        console.error("❌ Error: DB_ACCOUNT_ID tidak diatur. Proses callback tidak akan berhasil.");
         process.exit(1);
     }
 
@@ -97,12 +97,11 @@ async function sendResultToCallback(payload) {
     
     console.log(`-> Mengirim hasil ke callback URL: ${CALLBACK_URL}`);
     
-    // Siapkan payload dengan session_id dan user_id
+    // Siapkan payload dengan db_account_id
     const callbackPayload = { 
         ...payload, 
         secret: CALLBACK_SECRET,
-        session_id: SESSION_ID,
-        user_id: USER_ID
+        db_account_id: DB_ACCOUNT_ID
     };
     
     try {
