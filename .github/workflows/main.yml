@@ -10,7 +10,6 @@ name: Bot TerimaWA
 on:
   workflow_dispatch:
     # Definisikan semua input yang bisa diterima oleh workflow ini.
-    # Ini akan muncul sebagai form jika dijalankan manual dari UI GitHub.
     inputs:
       action:
         description: 'Aksi yang dijalankan (get_qr, get_pairing_code)'
@@ -23,7 +22,7 @@ on:
         type: string
         
       # ===============================================================
-      # PERUBAHAN DI SINI
+      # PERUBAHAN DI SINI: Menggunakan session_id dan user_id
       # ===============================================================
       session_id:
         description: 'ID Sesi unik dari trigger.php untuk callback polling'
@@ -61,8 +60,7 @@ jobs:
       CALLBACK_SECRET: ${{ secrets.CALLBACK_SECRET }}
       
       # ===============================================================
-      # PERUBAHAN DI SINI
-      # Ambil nilai dari input yang dikirim oleh trigger.php
+      # PERUBAHAN DI SINI: Meneruskan input baru ke environment
       # ===============================================================
       ACTION: ${{ github.event.inputs.action }}
       PHONE_NUMBER: ${{ github.event.inputs.phone_number }}
