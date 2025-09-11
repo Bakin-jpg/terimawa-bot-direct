@@ -22,15 +22,10 @@ on:
         type: string
         
       # ===============================================================
-      # PERUBAHAN DI SINI: Menggunakan session_id dan user_id
+      # PERUBAHAN DI SINI: Kembali menggunakan db_account_id
       # ===============================================================
-      session_id:
-        description: 'ID Sesi unik dari trigger.php untuk callback polling'
-        required: true
-        type: string
-
-      user_id:
-        description: 'ID Pengguna dari database yang meminta koneksi'
+      db_account_id:
+        description: 'ID dari tabel whatsapp_accounts untuk diupdate'
         required: true
         type: string
       # ===============================================================
@@ -64,8 +59,7 @@ jobs:
       # ===============================================================
       ACTION: ${{ github.event.inputs.action }}
       PHONE_NUMBER: ${{ github.event.inputs.phone_number }}
-      SESSION_ID: ${{ github.event.inputs.session_id }}
-      USER_ID: ${{ github.event.inputs.user_id }}
+      DB_ACCOUNT_ID: ${{ github.event.inputs.db_account_id }}
       # ===============================================================
 
     # Urutan langkah-langkah yang akan dijalankan oleh runner
