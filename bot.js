@@ -13,7 +13,6 @@ const {
     CALLBACK_URL,
     CALLBACK_SECRET,
     ACTION,
-    BOT_ID,
     PHONE_NUMBER,
     DB_ACCOUNT_ID
 } = process.env;
@@ -42,7 +41,6 @@ async function main() {
         case 'get_pairing_code':
             await getPairingCode(PHONE_NUMBER);
             break;
-        // Aksi blast bisa ditambahkan kembali jika diperlukan
         default:
             const errorMsg = `Aksi tidak dikenal atau tidak disediakan: ${ACTION}`;
             console.error(`❌ ${errorMsg}`);
@@ -137,25 +135,31 @@ async function getQrCode() {
 
         console.log(`5. Menavigasi ke halaman Bots: ${BOTS_PAGE_URL}`);
         await page.goto(BOTS_PAGE_URL, { waitUntil: 'networkidle0' });
+        console.log("   Halaman bots berhasil dimuat.");
 
-        console.log("6. Mencari dan mengklik tombol 'Tambah Bot'...");
-        // PERBAIKAN: Gunakan XPath untuk menemukan tombol berdasarkan teksnya
-        const addButtonXPath = "//button[contains(., 'Tambah Bot')]";
-        await page.waitForXPath(addButtonXPath);
+        console.log("6. Mencari dan mengklik tombol 'Tambah WhatsApp'...");
+        // =========================================================================
+        // PERBAIKAN FINAL: Mengganti "Tambah Bot" menjadi "Tambah WhatsApp"
+        // =========================================================================
+        const addButtonXPath = "//button[contains(., 'Tambah WhatsApp')]";
+        await page.waitForXPath(addButtonXPath, { timeout: 15000 }); // Tunggu 15 detik
         const [addButton] = await page.$x(addButtonXPath);
+        
         if (addButton) {
+            console.log("   Tombol ditemukan, mencoba mengklik...");
             await addButton.click();
         } else {
-            throw new Error("Tombol 'Tambah Bot' tidak ditemukan.");
+            throw new Error("Tombol 'Tambah WhatsApp' tidak ditemukan di halaman.");
         }
         
-        console.log("7. Menunggu QR Code muncul...");
-        const qrImageSelector = 'img[alt="QR Code"]'; 
-        await page.waitForSelector(qrImageSelector, { timeout: 45000 });
+        console.log("7. Menunggu modal atau QR Code muncul...");
+        // Kita asumsikan QR code ada di dalam modal, cari selector yang lebih umum dulu
+        const qrImageSelector = 'img[src^="data:image"]'; // Cari gambar apa pun yang sumbernya adalah data base64
+        await page.waitForSelector(qrImageSelector, { timeout: 45000 }); // Beri waktu 45 detik untuk QR generate
         
         const qrCodeSrc = await page.$eval(qrImageSelector, img => img.src);
         
-        if (!qrCodeSrc.startsWith('data:image')) {
+        if (!qrCodeSrc) {
             throw new Error('Gagal mendapatkan data base64 dari QR Code.');
         }
 
@@ -192,49 +196,54 @@ async function getPairingCode(phoneNumber) {
 
         console.log(`5. Menavigasi ke halaman Bots: ${BOTS_PAGE_URL}`);
         await page.goto(BOTS_PAGE_URL, { waitUntil: 'networkidle0' });
+        console.log("   Halaman bots berhasil dimuat.");
 
-        console.log("6. Mencari dan mengklik tombol 'Tambah Bot'...");
-        // PERBAIKAN: Gunakan XPath
-        const addButtonXPath = "//button[contains(., 'Tambah Bot')]";
-        await page.waitForXPath(addButtonXPath);
+        console.log("6. Mencari dan mengklik tombol 'Tambah WhatsApp'...");
+        // =========================================================================
+        // PERBAIKAN FINAL: Mengganti "Tambah Bot" menjadi "Tambah WhatsApp"
+        // =========================================================================
+        const addButtonXPath = "//button[contains(., 'Tambah WhatsApp')]";
+        await page.waitForXPath(addButtonXPath, { timeout: 15000 });
         const [addButton] = await page.$x(addButtonXPath);
+
         if (addButton) {
+            console.log("   Tombol ditemukan, mencoba mengklik...");
             await addButton.click();
         } else {
-            throw new Error("Tombol 'Tambah Bot' tidak ditemukan.");
+            throw new Error("Tombol 'Tambah WhatsApp' tidak ditemukan.");
         }
 
-        console.log("7. Beralih ke metode Pairing Code...");
-        // PERBAIKAN: Gunakan XPath untuk tab/tombol pairing code
-        const pairingTabXPath = "//button[contains(., 'Pairing Code')]";
-        await page.waitForXPath(pairingTabXPath);
-        const [pairingTab] = await page.$x(pairingTabXPath);
-        if (pairingTab) {
-            await pairingTab.click();
+        console.log("7. Menunggu modal muncul dan beralih ke metode Pairing Code...");
+        const pairingRadioButtonXPath = "//input[@name='connectionMethod' and @value='pairing']";
+        await page.waitForXPath(pairingRadioButtonXPath, { timeout: 10000 });
+        const [pairingRadioButton] = await page.$x(pairingRadioButtonXPath);
+        if(pairingRadioButton) {
+            await pairingRadioButton.click();
+            console.log("   Metode pairing dipilih.");
         } else {
-            throw new Error("Tab 'Pairing Code' tidak ditemukan.");
+            throw new Error("Pilihan 'Pairing Code' tidak ditemukan di modal.");
         }
 
         console.log(`8. Memasukkan nomor HP: ${phoneNumber}`);
-        // Selector ini biasanya stabil
-        await page.type('input[name="phone"]', phoneNumber);
+        // Selector input ini biasanya stabil
+        await page.waitForSelector('input#phoneNumber');
+        await page.type('input#phoneNumber', phoneNumber);
 
-        console.log("9. Mencari dan mengklik tombol untuk mendapatkan kode...");
-        // PERBAIKAN: Gunakan XPath untuk tombol 'Dapatkan Kode'
-        const getCodeButtonXPath = "//button[contains(., 'Dapatkan Kode')]";
-        await page.waitForXPath(getCodeButtonXPath);
-        const [getCodeButton] = await page.$x(getCodeButtonXPath);
-        if (getCodeButton) {
-            await getCodeButton.click();
+        console.log("9. Mencari dan mengklik tombol 'Lanjut'...");
+        const submitButtonXPath = "//button[@id='addBotSubmit' and contains(., 'Lanjut')]";
+        await page.waitForXPath(submitButtonXPath);
+        const [submitButton] = await page.$x(submitButtonXPath);
+
+        if (submitButton) {
+            await submitButton.click();
         } else {
-            throw new Error("Tombol 'Dapatkan Kode' tidak ditemukan.");
+            throw new Error("Tombol 'Lanjut' tidak ditemukan.");
         }
 
         console.log("10. Menunggu Pairing Code muncul...");
-        // PERBAIKAN: Selector untuk pairing code mungkin perlu disesuaikan.
-        // Mari kita cari elemen H3 yang teksnya berisi format kode (misal, 3 huruf, spasi, 5 angka)
-        const pairingCodeXPath = "//h3[contains(@class, 'text-2xl')]"; // Asumsi kode ada di dalam h3 dengan class tertentu
-        await page.waitForXPath(pairingCodeXPath, { timeout: 30000 });
+        // Dari inspect element, kodenya ada di dalam div dengan font-mono
+        const pairingCodeXPath = "//div[contains(@class, 'font-mono')]"; 
+        await page.waitForXPath(pairingCodeXPath, { timeout: 45000 });
         const [pairingCodeElement] = await page.$x(pairingCodeXPath);
         
         if (!pairingCodeElement) {
