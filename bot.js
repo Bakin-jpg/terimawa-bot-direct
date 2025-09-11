@@ -14,9 +14,9 @@ const {
     CALLBACK_SECRET,
     ACTION,
     PHONE_NUMBER,
-    DB_ACCOUNT_ID,    // ID dari database aplikasi Anda
-    TERIMAWA_BOT_ID,  // ID dari website terimawa.com (untuk manajemen)
-    VALUE             // Nilai yang akan di-set (misal: mode '1', atau blast '1'/'0')
+    DB_ACCOUNT_ID,    
+    TERIMAWA_BOT_ID,  
+    VALUE             
 } = process.env;
 
 
@@ -29,14 +29,14 @@ async function main() {
     }
      if (!DB_ACCOUNT_ID) {
         console.error("❌ Error: DB_ACCOUNT_ID tidak diatur. Proses callback tidak akan berhasil.");
-        process.exit(1); // Keluar jika ID database tidak ada
+        process.exit(1);
     }
 
     console.log(`🚀 Menjalankan aksi: ${ACTION}`);
 
     switch (ACTION) {
         case 'get_qr':
-            await getQr(); // Polling untuk QR tidak andal, jadi kita tetap pada fungsi lama
+            await getQr();
             break;
         case 'get_pairing_code':
             await getPairingAndPollForConnection(PHONE_NUMBER);
@@ -121,10 +121,9 @@ async function sendResultToCallback(payload) {
     }
 }
 
-// --- FUNGSI POLLING KONEKSI (FUNGSI BARU & PENTING) ---
+// --- FUNGSI POLLING KONEKSI ---
 async function pollForConnection(page, phoneNumber) {
     console.log(`🔄 Memulai polling untuk nomor: ${phoneNumber}`);
-    // Poll selama maks 90 detik (45 * 2 detik) untuk memberi waktu user
     for (let i = 0; i < 45; i++) { 
         await page.waitForTimeout(2000);
         
@@ -132,15 +131,12 @@ async function pollForConnection(page, phoneNumber) {
             console.log(`   ...mencari bot ${phoneNumber}... (percobaan ${i + 1})`);
             await page.reload({ waitUntil: 'networkidle0' });
 
-            // Cari list item <li> yang berisi nomor telepon yang kita cari
             const botLiXPath = `//li[contains(., "${phoneNumber}")]`;
             const [botLi] = await page.$x(botLiXPath);
 
             if (botLi) {
-                // Jika <li> ditemukan, cek apakah statusnya sudah "Terhubung"
                 const statusSpan = await botLi.$x(".//span[contains(@class, 'bg-emerald-100')]");
                 if (statusSpan.length > 0) {
-                    // Jika terhubung, cari elemen select untuk mengambil ID-nya
                     const botIdElement = await botLi.$('select[onchange^="updateBotSetting"]');
                     const botIdRaw = await botIdElement.evaluate(el => el.getAttribute('onchange'));
                     const botIdMatch = botIdRaw.match(/updateBotSetting\((\d+),/);
@@ -148,7 +144,6 @@ async function pollForConnection(page, phoneNumber) {
                     if (botIdMatch && botIdMatch[1]) {
                         const terimawaBotId = botIdMatch[1];
                         console.log(`   ✅ Bot terhubung! Nomor: ${phoneNumber}, ID TerimaWA: ${terimawaBotId}`);
-                        // Kembalikan semua data penting
                         return {
                             status: 'connected',
                             phone_number: phoneNumber,
@@ -223,21 +218,17 @@ async function getPairingAndPollForConnection(phoneNumber) {
         if (!pairingCodeText) throw new Error('Gagal mendapatkan teks Pairing Code.');
         
         console.log(`   ✅ Pairing Code didapatkan: ${pairingCodeText}. Mengirim ke callback...`);
-        // Kirim callback PERTAMA untuk menampilkan pairing code di frontend
         await sendResultToCallback({ status: 'success', type: 'pairing_code', data: pairingCodeText });
 
         console.log("⏳ Menunggu pengguna memasukkan pairing code dan bot terhubung...");
-        
-        // Setelah kode dikirim, kita mulai polling
         const connectionResult = await pollForConnection(page, phoneNumber);
         
-        // Kirim callback KEDUA (FINAL) setelah bot benar-benar terhubung
         await sendResultToCallback({ 
             status: 'success', 
             type: 'connected', 
             data: 'Bot terhubung via polling.',
             phone_number: connectionResult.phone_number,
-            bot_id: connectionResult.bot_id // ID PENTING INI DIKIRIM DI SINI
+            bot_id: connectionResult.bot_id
         });
 
     } catch (error) {
@@ -248,7 +239,7 @@ async function getPairingAndPollForConnection(phoneNumber) {
     }
 }
 
-// --- FUNGSI MANAJEMEN BOT (FUNGSI BARU) ---
+// --- FUNGSI MANAJEMEN BOT ---
 async function manageBot(settingType, terimawaBotId, value) {
     if (!terimawaBotId || value === undefined) {
         await sendResultToCallback({ status: 'error', message: 'ID Bot TerimaWA atau Value tidak disediakan.' });
@@ -279,10 +270,15 @@ async function manageBot(settingType, terimawaBotId, value) {
             }
             await button.click();
             console.log(`   ✅ Perintah blast/stop berhasil dikirim.`);
+            
+            // ===============================================================
+            // === PERBAIKAN DI SINI: Tambahkan waktu tunggu setelah klik ===
+            // ===============================================================
+            console.log("   ...menunggu 5 detik agar halaman terimawa.com sempat me-refresh...");
+            await page.waitForTimeout(5000); 
+            // ===============================================================
         }
         
-        await page.waitForTimeout(1500); // Beri waktu agar perubahan tersimpan
-
         await sendResultToCallback({ status: 'success', type: 'management', message: `Aksi ${settingType} berhasil.` });
 
     } catch (error) {
