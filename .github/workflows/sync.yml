@@ -1,0 +1,55 @@
+# Nama Workflow yang akan tampil di tab "Actions" di GitHub
+name: Sinkronisasi Data Bot
+
+on:
+  # 1. Pemicu berdasarkan jadwal (schedule)
+  schedule:
+    # Menjalankan setiap 10 menit. Formatnya disebut "cron".
+    # '*/10 * * * *' artinya: "pada menit ke-0, 10, 20, 30, 40, dan 50 setiap jam"
+    - cron: '*/10 * * * *'
+    
+  # 2. Pemicu manual (workflow_dispatch)
+  # Ini memungkinkan Anda untuk menjalankan sinkronisasi secara manual dari
+  # tab "Actions" di GitHub jika diperlukan, tanpa harus menunggu jadwal.
+  workflow_dispatch:
+
+jobs:
+  run-sync-script:
+    # Nama Job yang akan tampil di log eksekusi
+    name: Menjalankan Skrip Sinkronisasi
+    
+    # Gunakan runner terbaru dari GitHub
+    runs-on: ubuntu-latest
+    
+    # Definisikan environment variables yang akan tersedia untuk sync.js
+    # PENTING: Semua value di 'secrets' harus sudah Anda atur di
+    # Settings -> Secrets and variables -> Actions di repositori GitHub Anda.
+    env:
+      # Kredensial Login TerimaWA (menggunakan secrets yang sudah ada)
+      TERIMAWA_USERNAME: ${{ secrets.TERIMAWA_USERNAME }}
+      TERIMAWA_PASSWORD: ${{ secrets.TERIMAWA_PASSWORD }}
+      
+      # Secrets BARU yang harus Anda tambahkan di pengaturan GitHub
+      SYNC_CALLBACK_URL: ${{ secrets.SYNC_CALLBACK_URL }} 
+      SYNC_SECRET: ${{ secrets.SYNC_SECRET }}
+
+    # Urutan langkah-langkah yang akan dijalankan oleh runner
+    steps:
+      # Langkah 1: Mengunduh (checkout) kode dari repositori Anda
+      - name: 1. Checkout Repositori
+        uses: actions/checkout@v4
+
+      # Langkah 2: Menyiapkan environment Node.js
+      - name: 2. Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Langkah 3: Menginstal dependensi yang dibutuhkan oleh sync.js
+      # (Karena dependensinya sama dengan bot.js, kita bisa menggunakan cache yang sama)
+      - name: 3. Install Dependencies
+        run: npm install puppeteer-core @sparticuz/chromium
+        
+      # Langkah 4: Menjalankan skrip sinkronisasi data
+      - name: 4. Jalankan Skrip Sinkronisasi
+        run: node sync.js
