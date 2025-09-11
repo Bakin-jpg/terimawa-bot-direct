@@ -40,12 +40,58 @@ async function main() {
 }
 
 // --- FUNGSI HELPER ---
-async function launchBrowser() { /* ... (Tetap Sama) ... */ }
-async function loginAndGetPage(browser) { /* ... (Tetap Sama) ... */ }
-async function sendResultToCallback(payload) { /* ... (Tetap Sama) ... */ }
+async function launchBrowser() {
+    console.log("1. Meluncurkan browser...");
+    return await puppeteer.launch({
+        args: chromium.args,
+        defaultViewport: chromium.defaultViewport,
+        executablePath: await chromium.executablePath(),
+        headless: chromium.headless,
+    });
+}
+
+async function loginAndGetPage(browser) {
+    const page = await browser.newPage();
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36');
+    console.log(`2. Membuka halaman login: ${LOGIN_PAGE_URL}`);
+    await page.goto(LOGIN_PAGE_URL, { waitUntil: 'networkidle0', timeout: 60000 });
+    console.log("3. Mengisi form login...");
+    await page.type('input[name="username"]', TERIMAWA_USERNAME);
+    await page.type('input[name="password"]', TERIMAWA_PASSWORD);
+    console.log("4. Mengklik tombol login...");
+    await Promise.all([
+        page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 30000 }),
+        page.click('button[type="submit"]')
+    ]);
+    if (!page.url().startsWith(SUCCESS_URL_REDIRECT)) {
+        throw new Error(`Gagal login. URL saat ini: ${page.url()}`);
+    }
+    console.log(`   ✅ Login berhasil.`);
+    return page;
+}
+
+async function sendResultToCallback(payload) {
+    if (!CALLBACK_URL || !CALLBACK_SECRET) {
+        console.log("⚠️ Peringatan: CALLBACK_URL/SECRET tidak diatur.", JSON.stringify(payload));
+        return;
+    }
+    console.log(`-> Mengirim hasil ke callback URL: ${CALLBACK_URL}`);
+    const callbackPayload = { ...payload, secret: CALLBACK_SECRET, db_account_id: DB_ACCOUNT_ID };
+    try {
+        const response = await fetch(CALLBACK_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(callbackPayload)
+        });
+        if (response.ok) console.log("   ✅ Berhasil mengirim data ke server Anda.");
+        else throw new Error(`Status: ${response.status}. Pesan: ${await response.text()}`);
+    } catch (error) {
+        console.error("   ❌ GAGAL mengirim data ke server Anda:", error.message);
+    }
+}
 
 // =========================================================================
-// FUNGSI UTAMA YANG BARU: Menggabungkan semua logika koneksi
+// FUNGSI UTAMA YANG MENGGABUNGKAN SEMUA LOGIKA KONEKSI
 // =========================================================================
 async function handleConnectionProcess(mode, phoneNumber = null) {
     let browser = null;
@@ -65,7 +111,6 @@ async function handleConnectionProcess(mode, phoneNumber = null) {
         console.log("7. Menunggu modal pilihan metode muncul...");
         await page.waitForSelector('#addBotModal:not(.hidden)');
         
-        // Pilih metode dan klik lanjut
         if (mode === 'pairing') {
             console.log("8. Memilih metode 'Pairing Code'...");
             const pairingRadioButtonXPath = "//input[@name='connectionMethod' and @value='pairing']";
@@ -86,7 +131,6 @@ async function handleConnectionProcess(mode, phoneNumber = null) {
         const [submitButton] = await page.$x(submitButtonXPath);
         await submitButton.click();
         
-        // Dapatkan QR atau Pairing Code dan kirim callback pertama
         if (mode === 'qr') {
             console.log("11. Menunggu modal QR Code muncul...");
             const qrImageSelector = 'img#qrCodeImage';
@@ -94,8 +138,9 @@ async function handleConnectionProcess(mode, phoneNumber = null) {
             const qrCodeSrc = await page.$eval(qrImageSelector, img => img.src);
             if (!qrCodeSrc) throw new Error('Gagal mendapatkan data QR Code.');
             console.log("   ✅ QR Code berhasil didapatkan, mengirim ke server...");
-            await sendResultToCallback({ status: 'success', type: 'qr_ready', data: qrCodeSrc });
-        } else { // mode pairing
+            // Kirim tipe 'qr' BUKAN 'qr_ready' agar cocok dengan api.php
+            await sendResultToCallback({ status: 'success', type: 'qr', data: qrCodeSrc });
+        } else {
             console.log("11. Menunggu modal Pairing Code muncul...");
             const pairingCodeXPath = "//div[contains(@class, 'font-mono')]";
             await page.waitForXPath(pairingCodeXPath, { timeout: 60000, visible: true });
@@ -104,25 +149,29 @@ async function handleConnectionProcess(mode, phoneNumber = null) {
             const pairingCodeText = await page.evaluate(el => el.textContent.trim(), pairingCodeElement);
             if (!pairingCodeText) throw new Error('Gagal mendapatkan teks Pairing Code.');
             console.log(`   ✅ Pairing Code didapatkan: ${pairingCodeText}, mengirim ke server...`);
-            await sendResultToCallback({ status: 'success', type: 'pairing_ready', data: pairingCodeText });
+            // Kirim tipe 'pairing_code' agar cocok dengan api.php
+            await sendResultToCallback({ status: 'success', type: 'pairing_code', data: pairingCodeText });
         }
 
         // =========================================================================
-        // LANGKAH KRUSIAL: Jangan berhenti, pantau halaman untuk status terhubung
+        // LANGKAH KRUSIAL: Pantau halaman untuk status terhubung
         // =========================================================================
         console.log("12. Memantau status koneksi di halaman (menunggu hingga 2 menit)...");
-        // Kita asumsikan setelah terhubung, halaman akan redirect atau menampilkan pesan sukses
-        // Cara paling andal adalah menunggu URL berubah kembali ke /bots
+        // Kita asumsikan setelah terhubung, halaman akan redirect kembali ke /bots
+        // atau setidaknya URL akan berubah.
         await page.waitForNavigation({ timeout: 120000 }); // Tunggu hingga 2 menit
         
         if (page.url().includes(BOTS_PAGE_URL)) {
              console.log("   ✅ Perangkat terdeteksi terhubung!");
-             // Setelah terhubung, kita perlu mengambil info bot baru (opsional tapi bagus)
-             // Untuk kesederhanaan, kita langsung kirim status 'connected'
+             // Setelah terhubung, kita perlu mengambil info bot baru.
+             // Untuk saat ini, kita akan ambil nomor HP dari bot terbaru di daftar.
+             const latestBotNumber = await page.$eval('#botsList li:first-child .text-sm.font-semibold', el => el.textContent.trim());
+
              await sendResultToCallback({ 
                 status: 'success', 
                 type: 'connected', 
-                // Di sini Anda bisa menambahkan logika untuk scrape nomor HP/bot ID jika perlu
+                phone_number: latestBotNumber, // Kirim nomor HP yang terdeteksi
+                // bot_id bisa di-scrape juga jika diperlukan
              });
         } else {
             throw new Error("Halaman tidak redirect setelah koneksi, timeout.");
@@ -138,11 +187,6 @@ async function handleConnectionProcess(mode, phoneNumber = null) {
         }
     }
 }
-
-// Helper functions (Tetap sama)
-async function launchBrowser() { /* ... */ }
-async function loginAndGetPage(browser) { /* ... */ }
-async function sendResultToCallback(payload) { /* ... */ }
 
 // --- JALANKAN FUNGSI UTAMA ---
 main();
