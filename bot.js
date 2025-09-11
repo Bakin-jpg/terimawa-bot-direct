@@ -20,38 +20,30 @@ const {
 
 // --- FUNGSI UTAMA (ROUTER) ---
 async function main() {
-    // Validasi input penting
     if (!TERIMAWA_USERNAME || !TERIMAWA_PASSWORD) {
-        await sendResultToCallback({ status: 'error', message: 'Kredensial TerimaWA tidak diatur di environment.' });
-        console.error("❌ Error: Kredensial TERIMAWA_USERNAME atau TERIMAWA_PASSWORD tidak diatur.");
+        await sendResultToCallback({ status: 'error', message: 'Kredensial TerimaWA tidak diatur.' });
         process.exit(1);
     }
-     if (!DB_ACCOUNT_ID && (ACTION === 'get_qr' || ACTION === 'get_pairing_code')) {
-        await sendResultToCallback({ status: 'error', message: 'DB Account ID tidak ditemukan. Proses tidak bisa dilanjutkan.' });
-        console.error("❌ Error: DB_ACCOUNT_ID tidak diatur untuk aksi koneksi bot.");
+    if (!DB_ACCOUNT_ID && (ACTION === 'get_qr' || ACTION === 'get_pairing_code')) {
+        await sendResultToCallback({ status: 'error', message: 'DB Account ID tidak ditemukan.' });
         process.exit(1);
     }
-
     console.log(`🚀 Menjalankan aksi: ${ACTION}`);
-
     switch (ACTION) {
         case 'get_qr':
-            await getQrCode();
+            await getQr();
             break;
         case 'get_pairing_code':
-            await getPairingCode(PHONE_NUMBER);
+            await getPairing(PHONE_NUMBER);
             break;
         default:
-            const errorMsg = `Aksi tidak dikenal atau tidak disediakan: ${ACTION}`;
-            console.error(`❌ ${errorMsg}`);
-            if (DB_ACCOUNT_ID) {
-                await sendResultToCallback({ status: 'error', message: errorMsg });
-            }
+            const errorMsg = `Aksi tidak dikenal: ${ACTION}`;
+            if (DB_ACCOUNT_ID) await sendResultToCallback({ status: 'error', message: errorMsg });
             process.exit(1);
     }
 }
 
-// --- FUNGSI HELPER UNTUK BROWSER ---
+// --- FUNGSI HELPER ---
 async function launchBrowser() {
     console.log("1. Meluncurkan browser...");
     return await puppeteer.launch({
@@ -62,72 +54,51 @@ async function launchBrowser() {
     });
 }
 
-// --- FUNGSI LOGIN ---
 async function loginAndGetPage(browser) {
     const page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36');
-    
     console.log(`2. Membuka halaman login: ${LOGIN_PAGE_URL}`);
     await page.goto(LOGIN_PAGE_URL, { waitUntil: 'networkidle0', timeout: 60000 });
-    
     console.log("3. Mengisi form login...");
     await page.type('input[name="username"]', TERIMAWA_USERNAME);
     await page.type('input[name="password"]', TERIMAWA_PASSWORD);
-
     console.log("4. Mengklik tombol login...");
     await Promise.all([
         page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 30000 }),
         page.click('button[type="submit"]')
     ]);
-
     if (!page.url().startsWith(SUCCESS_URL_REDIRECT)) {
-        throw new Error(`Gagal login. URL saat ini: ${page.url()}. Pastikan kredensial benar.`);
+        throw new Error(`Gagal login. URL saat ini: ${page.url()}`);
     }
-    
     console.log(`   ✅ Login berhasil.`);
     return page;
 }
 
-// --- FUNGSI CALLBACK KE SERVER ANDA ---
 async function sendResultToCallback(payload) {
     if (!CALLBACK_URL || !CALLBACK_SECRET) {
-        console.log("⚠️ Peringatan: CALLBACK_URL atau CALLBACK_SECRET tidak diatur. Hasil tidak akan dikirim kembali.");
-        console.log("Payload yang tidak terkirim:", JSON.stringify(payload));
+        console.log("⚠️ Peringatan: CALLBACK_URL/SECRET tidak diatur.", JSON.stringify(payload));
         return;
     }
-    
     console.log(`-> Mengirim hasil ke callback URL: ${CALLBACK_URL}`);
-    
-    const callbackPayload = { 
-        ...payload, 
-        secret: CALLBACK_SECRET,
-        db_account_id: DB_ACCOUNT_ID
-    };
-    
+    const callbackPayload = { ...payload, secret: CALLBACK_SECRET, db_account_id: DB_ACCOUNT_ID };
     try {
         const response = await fetch(CALLBACK_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(callbackPayload)
         });
-        
-        if (response.ok) {
-            console.log("   ✅ Berhasil mengirim data ke server Anda.");
-        } else {
-            const errorText = await response.text();
-            throw new Error(`Gagal mengirim data. Status: ${response.status}. Pesan: ${errorText}`);
-        }
+        if (response.ok) console.log("   ✅ Berhasil mengirim data ke server Anda.");
+        else throw new Error(`Status: ${response.status}. Pesan: ${await response.text()}`);
     } catch (error) {
         console.error("   ❌ GAGAL mengirim data ke server Anda:", error.message);
     }
 }
 
-// --- FUNGSI-FUNGSI AKSI ---
+// =========================================================================
+// FUNGSI BARU DAN AKURAT
+// =========================================================================
 
-/**
- * Mendapatkan QR Code untuk koneksi WhatsApp
- */
-async function getQrCode() {
+async function getQr() {
     let browser = null;
     try {
         browser = await launchBrowser();
@@ -137,29 +108,30 @@ async function getQrCode() {
         await page.goto(BOTS_PAGE_URL, { waitUntil: 'networkidle0' });
         console.log("   Halaman bots berhasil dimuat.");
 
-        console.log("6. Mencari dan mengklik tombol 'Tambah WhatsApp'...");
-        // =========================================================================
-        // PERBAIKAN FINAL: Mengganti "Tambah Bot" menjadi "Tambah WhatsApp"
-        // =========================================================================
-        const addButtonXPath = "//button[contains(., 'Tambah WhatsApp')]";
-        await page.waitForXPath(addButtonXPath, { timeout: 15000 }); // Tunggu 15 detik
+        console.log("6. Mengklik tombol 'Tambah WhatsApp'...");
+        const addButtonXPath = "//button[@id='addBotBtn']";
+        await page.waitForXPath(addButtonXPath);
         const [addButton] = await page.$x(addButtonXPath);
+        await addButton.click();
+
+        console.log("7. Menunggu modal pilihan metode muncul...");
+        await page.waitForSelector('#addBotModal:not(.hidden)');
         
-        if (addButton) {
-            console.log("   Tombol ditemukan, mencoba mengklik...");
-            await addButton.click();
-        } else {
-            throw new Error("Tombol 'Tambah WhatsApp' tidak ditemukan di halaman.");
-        }
-        
-        console.log("7. Menunggu modal atau QR Code muncul...");
-        // Kita asumsikan QR code ada di dalam modal, cari selector yang lebih umum dulu
-        const qrImageSelector = 'img[src^="data:image"]'; // Cari gambar apa pun yang sumbernya adalah data base64
-        await page.waitForSelector(qrImageSelector, { timeout: 45000 }); // Beri waktu 45 detik untuk QR generate
+        // Radio button QR sudah terpilih secara default, jadi kita langsung klik Lanjut
+        console.log("8. Metode QR sudah default, mengklik tombol 'Lanjut'...");
+        const submitButtonXPath = "//button[@id='addBotSubmit']";
+        await page.waitForXPath(submitButtonXPath);
+        const [submitButton] = await page.$x(submitButtonXPath);
+        await submitButton.click();
+
+        console.log("9. Menunggu modal QR Code muncul...");
+        // Berdasarkan inspect element, modal QR memiliki gambar dengan id 'qrCodeImage'
+        const qrImageSelector = 'img#qrCodeImage';
+        await page.waitForSelector(qrImageSelector, { timeout: 60000, visible: true }); // Tunggu hingga 60 detik dan terlihat
         
         const qrCodeSrc = await page.$eval(qrImageSelector, img => img.src);
-        
-        if (!qrCodeSrc) {
+
+        if (!qrCodeSrc || !qrCodeSrc.startsWith('data:image')) {
             throw new Error('Gagal mendapatkan data base64 dari QR Code.');
         }
 
@@ -167,28 +139,19 @@ async function getQrCode() {
         await sendResultToCallback({ status: 'success', type: 'qr', data: qrCodeSrc });
 
     } catch (error) {
-        console.error("❌ Terjadi error saat mengambil QR Code:", error.message);
-        await sendResultToCallback({ status: 'error', message: error.message || 'Gagal mengambil QR Code.' });
+        console.error("❌ Terjadi error saat proses QR:", error.message);
+        await sendResultToCallback({ status: 'error', message: error.message || 'Gagal total saat proses QR.' });
     } finally {
-        if (browser) {
-            await browser.close();
-            console.log("Browser ditutup.");
-        }
+        if (browser) await browser.close();
     }
 }
 
-/**
- * Mendapatkan Pairing Code berdasarkan Nomor HP
- * @param {string} phoneNumber Nomor HP dengan kode negara
- */
-async function getPairingCode(phoneNumber) {
+async function getPairing(phoneNumber) {
     if (!phoneNumber) {
-        const errorMsg = "Nomor HP tidak disediakan untuk pairing code.";
-        console.error(`❌ ${errorMsg}`);
-        await sendResultToCallback({ status: 'error', message: errorMsg });
+        await sendResultToCallback({ status: 'error', message: 'Nomor HP wajib untuk pairing code.' });
         return;
     }
-    
+
     let browser = null;
     try {
         browser = await launchBrowser();
@@ -198,75 +161,53 @@ async function getPairingCode(phoneNumber) {
         await page.goto(BOTS_PAGE_URL, { waitUntil: 'networkidle0' });
         console.log("   Halaman bots berhasil dimuat.");
 
-        console.log("6. Mencari dan mengklik tombol 'Tambah WhatsApp'...");
-        // =========================================================================
-        // PERBAIKAN FINAL: Mengganti "Tambah Bot" menjadi "Tambah WhatsApp"
-        // =========================================================================
-        const addButtonXPath = "//button[contains(., 'Tambah WhatsApp')]";
-        await page.waitForXPath(addButtonXPath, { timeout: 15000 });
+        console.log("6. Mengklik tombol 'Tambah WhatsApp'...");
+        const addButtonXPath = "//button[@id='addBotBtn']";
+        await page.waitForXPath(addButtonXPath);
         const [addButton] = await page.$x(addButtonXPath);
+        await addButton.click();
 
-        if (addButton) {
-            console.log("   Tombol ditemukan, mencoba mengklik...");
-            await addButton.click();
-        } else {
-            throw new Error("Tombol 'Tambah WhatsApp' tidak ditemukan.");
-        }
-
-        console.log("7. Menunggu modal muncul dan beralih ke metode Pairing Code...");
+        console.log("7. Menunggu modal pilihan metode muncul...");
+        await page.waitForSelector('#addBotModal:not(.hidden)');
+        
+        console.log("8. Memilih metode 'Pairing Code'...");
         const pairingRadioButtonXPath = "//input[@name='connectionMethod' and @value='pairing']";
-        await page.waitForXPath(pairingRadioButtonXPath, { timeout: 10000 });
+        await page.waitForXPath(pairingRadioButtonXPath);
         const [pairingRadioButton] = await page.$x(pairingRadioButtonXPath);
-        if(pairingRadioButton) {
-            await pairingRadioButton.click();
-            console.log("   Metode pairing dipilih.");
-        } else {
-            throw new Error("Pilihan 'Pairing Code' tidak ditemukan di modal.");
-        }
-
-        console.log(`8. Memasukkan nomor HP: ${phoneNumber}`);
-        // Selector input ini biasanya stabil
-        await page.waitForSelector('input#phoneNumber');
+        await pairingRadioButton.click();
+        
+        console.log(`9. Memasukkan nomor HP: ${phoneNumber}`);
+        await page.waitForSelector('input#phoneNumber', { visible: true });
         await page.type('input#phoneNumber', phoneNumber);
 
-        console.log("9. Mencari dan mengklik tombol 'Lanjut'...");
-        const submitButtonXPath = "//button[@id='addBotSubmit' and contains(., 'Lanjut')]";
+        console.log("10. Mengklik tombol 'Lanjut'...");
+        const submitButtonXPath = "//button[@id='addBotSubmit']";
         await page.waitForXPath(submitButtonXPath);
         const [submitButton] = await page.$x(submitButtonXPath);
+        await submitButton.click();
 
-        if (submitButton) {
-            await submitButton.click();
-        } else {
-            throw new Error("Tombol 'Lanjut' tidak ditemukan.");
-        }
-
-        console.log("10. Menunggu Pairing Code muncul...");
-        // Dari inspect element, kodenya ada di dalam div dengan font-mono
-        const pairingCodeXPath = "//div[contains(@class, 'font-mono')]"; 
-        await page.waitForXPath(pairingCodeXPath, { timeout: 45000 });
-        const [pairingCodeElement] = await page.$x(pairingCodeXPath);
+        console.log("11. Menunggu modal Pairing Code muncul...");
+        // Berdasarkan inspect element, modal pairing memiliki div dengan font-mono
+        const pairingCodeXPath = "//div[contains(@class, 'font-mono')]";
+        await page.waitForXPath(pairingCodeXPath, { timeout: 60000, visible: true });
         
-        if (!pairingCodeElement) {
-            throw new Error('Elemen untuk Pairing Code tidak ditemukan.');
-        }
-
+        const [pairingCodeElement] = await page.$x(pairingCodeXPath);
+        if (!pairingCodeElement) throw new Error('Elemen pairing code tidak ditemukan.');
+        
         const pairingCodeText = await page.evaluate(el => el.textContent.trim(), pairingCodeElement);
 
         if (!pairingCodeText) {
             throw new Error('Gagal mendapatkan teks Pairing Code.');
         }
-        
+
         console.log(`   ✅ Pairing Code didapatkan: ${pairingCodeText}`);
         await sendResultToCallback({ status: 'success', type: 'pairing_code', data: pairingCodeText });
 
     } catch (error) {
-        console.error("❌ Terjadi error saat mengambil Pairing Code:", error.message);
-        await sendResultToCallback({ status: 'error', message: error.message || 'Gagal mengambil Pairing Code.' });
+        console.error("❌ Terjadi error saat proses Pairing:", error.message);
+        await sendResultToCallback({ status: 'error', message: error.message || 'Gagal total saat proses Pairing.' });
     } finally {
-        if (browser) {
-            await browser.close();
-            console.log("Browser ditutup.");
-        }
+        if (browser) await browser.close();
     }
 }
 
