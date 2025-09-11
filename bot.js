@@ -131,25 +131,22 @@ async function pollForConnection(page, phoneNumber) {
             console.log(`   ...mencari bot ${phoneNumber}... (percobaan ${i + 1})`);
             await page.reload({ waitUntil: 'networkidle0' });
 
-            const botLiXPath = `//li[contains(., "${phoneNumber}")]`;
+            const botLiXPath = `//li[.//span[contains(text(), "Terhubung")] and contains(., "${phoneNumber}")]`;
             const [botLi] = await page.$x(botLiXPath);
 
             if (botLi) {
-                const statusSpan = await botLi.$x(".//span[contains(@class, 'bg-emerald-100')]");
-                if (statusSpan.length > 0) {
-                    const botIdElement = await botLi.$('select[onchange^="updateBotSetting"]');
-                    const botIdRaw = await botIdElement.evaluate(el => el.getAttribute('onchange'));
-                    const botIdMatch = botIdRaw.match(/updateBotSetting\((\d+),/);
-                    
-                    if (botIdMatch && botIdMatch[1]) {
-                        const terimawaBotId = botIdMatch[1];
-                        console.log(`   ✅ Bot terhubung! Nomor: ${phoneNumber}, ID TerimaWA: ${terimawaBotId}`);
-                        return {
-                            status: 'connected',
-                            phone_number: phoneNumber,
-                            bot_id: terimawaBotId
-                        };
-                    }
+                const botIdElement = await botLi.$('select[onchange^="updateBotSetting"]');
+                const botIdRaw = await botIdElement.evaluate(el => el.getAttribute('onchange'));
+                const botIdMatch = botIdRaw.match(/updateBotSetting\((\d+),/);
+                
+                if (botIdMatch && botIdMatch[1]) {
+                    const terimawaBotId = botIdMatch[1];
+                    console.log(`   ✅ Bot terhubung! Nomor: ${phoneNumber}, ID TerimaWA: ${terimawaBotId}`);
+                    return {
+                        status: 'connected',
+                        phone_number: phoneNumber,
+                        bot_id: terimawaBotId
+                    };
                 }
             }
         } catch (e) {
@@ -239,7 +236,7 @@ async function getPairingAndPollForConnection(phoneNumber) {
     }
 }
 
-// --- FUNGSI MANAJEMEN BOT ---
+// --- FUNGSI MANAJEMEN BOT (DENGAN LOGIKA BARU DAN LEBIH PINTAR) ---
 async function manageBot(settingType, terimawaBotId, value) {
     if (!terimawaBotId || value === undefined) {
         await sendResultToCallback({ status: 'error', message: 'ID Bot TerimaWA atau Value tidak disediakan.' });
@@ -253,32 +250,40 @@ async function manageBot(settingType, terimawaBotId, value) {
         console.log(`5. Menavigasi ke halaman Bots: ${BOTS_PAGE_URL}`);
         await page.goto(BOTS_PAGE_URL, { waitUntil: 'networkidle0' });
 
+        // Cari <li> container untuk bot yang spesifik DAN AKTIF
+        const botContainerXPath = 
+            `//li[.//select[contains(@onchange, "updateBotSetting(${terimawaBotId},")] and .//span[contains(text(), "Terhubung")]]`;
+        
+        console.log(`6. Mencari container untuk bot AKTIF dengan ID: ${terimawaBotId}`);
+        const [botContainer] = await page.$x(botContainerXPath);
+        
+        if (!botContainer) {
+            throw new Error(`Container untuk bot AKTIF dengan ID ${terimawaBotId} tidak ditemukan. Pastikan bot terhubung.`);
+        }
+        console.log("   ✅ Container bot aktif ditemukan.");
+
         if (settingType === 'mode') {
-            console.log(`6. Mengubah Mode untuk Bot ID ${terimawaBotId} ke value ${value}`);
-            const modeSelectSelector = `select[onchange*="updateBotSetting(${terimawaBotId}, 'mode'"]`;
-            await page.waitForSelector(modeSelectSelector, { timeout: 15000 });
-            await page.select(modeSelectSelector, value);
+            console.log(`7. Mengubah Mode untuk Bot ID ${terimawaBotId} ke value ${value}`);
+            const modeSelect = await botContainer.$('select[onchange*="updateBotSetting"]');
+            await modeSelect.select(value);
             console.log(`   ✅ Mode berhasil diubah.`);
             
         } else if (settingType === 'blasting') {
-            console.log(`6. Mengubah Status Blast untuk Bot ID ${terimawaBotId} ke value ${value}`);
-            const blastButtonSelector = `button[onclick*="updateBotSending(${terimawaBotId}, '${value}')"]`;
+            console.log(`7. Mencari tombol Blast/Stop di dalam container bot.`);
+            const blastButton = await botContainer.$('button[onclick*="updateBotSending"]');
 
-            const button = await page.$(blastButtonSelector);
-            if (!button) {
-                 throw new Error(`Tombol blast untuk bot ${terimawaBotId} dengan aksi '${value}' tidak ditemukan. Mungkin statusnya sudah benar?`);
+            if (!blastButton) {
+                 throw new Error(`Tombol Blast/Stop untuk bot ${terimawaBotId} tidak ditemukan di dalam container.`);
             }
-            await button.click();
-            console.log(`   ✅ Perintah blast/stop berhasil dikirim.`);
             
-            // ===============================================================
-            // === PERBAIKAN DI SINI: Tambahkan waktu tunggu setelah klik ===
-            // ===============================================================
-            console.log("   ...menunggu 5 detik agar halaman terimawa.com sempat me-refresh...");
-            await page.waitForTimeout(5000); 
-            // ===============================================================
+            const buttonText = await blastButton.evaluate(el => el.textContent.trim());
+            console.log(`   ✅ Tombol ditemukan dengan teks: "${buttonText}". Mengklik tombol...`);
+            await blastButton.click();
         }
         
+        console.log("   ...menunggu 3 detik agar perubahan diproses oleh server terimawa.com...");
+        await page.waitForTimeout(3000); 
+
         await sendResultToCallback({ status: 'success', type: 'management', message: `Aksi ${settingType} berhasil.` });
 
     } catch (error) {
@@ -288,6 +293,7 @@ async function manageBot(settingType, terimawaBotId, value) {
         if (browser) await browser.close();
     }
 }
+
 
 // --- JALANKAN FUNGSI UTAMA ---
 main();
