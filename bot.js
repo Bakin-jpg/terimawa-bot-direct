@@ -20,23 +20,18 @@ const {
 
 // --- FUNGSI UTAMA (ROUTER) ---
 async function main() {
+    // Pindahkan validasi ke dalam try-catch agar error bisa ditangani dengan benar
     if (!TERIMAWA_USERNAME || !TERIMAWA_PASSWORD || !DB_ACCOUNT_ID) {
-        await sendResultToCallback({ status: 'error', message: 'Variabel environment penting tidak diatur.' });
+        console.error("❌ Error: Variabel environment penting (USERNAME, PASSWORD, atau DB_ACCOUNT_ID) tidak diatur.");
+        // Kita tidak bisa mengirim callback di sini karena belum ada browser/koneksi.
+        // Cukup hentikan proses.
         process.exit(1);
     }
+    
     console.log(`🚀 Menjalankan aksi: ${ACTION}`);
-    switch (ACTION) {
-        case 'get_qr':
-            await handleConnectionProcess('qr');
-            break;
-        case 'get_pairing_code':
-            await handleConnectionProcess('pairing', PHONE_NUMBER);
-            break;
-        default:
-            const errorMsg = `Aksi tidak dikenal: ${ACTION}`;
-            await sendResultToCallback({ status: 'error', message: errorMsg });
-            process.exit(1);
-    }
+
+    // Kita akan membungkus semua aksi dalam satu fungsi agar penanganan error-nya terpusat
+    await handleConnectionProcess(ACTION, PHONE_NUMBER);
 }
 
 // --- FUNGSI HELPER ---
@@ -93,7 +88,12 @@ async function sendResultToCallback(payload) {
 // =========================================================================
 // FUNGSI UTAMA YANG MENGGABUNGKAN SEMUA LOGIKA KONEKSI
 // =========================================================================
-async function handleConnectionProcess(mode, phoneNumber = null) {
+async function handleConnectionProcess(action, phoneNumber = null) {
+    if (action === 'get_pairing_code' && !phoneNumber) {
+        await sendResultToCallback({ status: 'error', message: 'Nomor HP wajib untuk pairing code.' });
+        return;
+    }
+
     let browser = null;
     try {
         browser = await launchBrowser();
@@ -111,7 +111,7 @@ async function handleConnectionProcess(mode, phoneNumber = null) {
         console.log("7. Menunggu modal pilihan metode muncul...");
         await page.waitForSelector('#addBotModal:not(.hidden)');
         
-        if (mode === 'pairing') {
+        if (action === 'get_pairing_code') {
             console.log("8. Memilih metode 'Pairing Code'...");
             const pairingRadioButtonXPath = "//input[@name='connectionMethod' and @value='pairing']";
             await page.waitForXPath(pairingRadioButtonXPath);
@@ -131,14 +131,13 @@ async function handleConnectionProcess(mode, phoneNumber = null) {
         const [submitButton] = await page.$x(submitButtonXPath);
         await submitButton.click();
         
-        if (mode === 'qr') {
+        if (action === 'get_qr') {
             console.log("11. Menunggu modal QR Code muncul...");
             const qrImageSelector = 'img#qrCodeImage';
             await page.waitForSelector(qrImageSelector, { timeout: 60000, visible: true });
             const qrCodeSrc = await page.$eval(qrImageSelector, img => img.src);
             if (!qrCodeSrc) throw new Error('Gagal mendapatkan data QR Code.');
             console.log("   ✅ QR Code berhasil didapatkan, mengirim ke server...");
-            // Kirim tipe 'qr' BUKAN 'qr_ready' agar cocok dengan api.php
             await sendResultToCallback({ status: 'success', type: 'qr', data: qrCodeSrc });
         } else {
             console.log("11. Menunggu modal Pairing Code muncul...");
@@ -149,37 +148,27 @@ async function handleConnectionProcess(mode, phoneNumber = null) {
             const pairingCodeText = await page.evaluate(el => el.textContent.trim(), pairingCodeElement);
             if (!pairingCodeText) throw new Error('Gagal mendapatkan teks Pairing Code.');
             console.log(`   ✅ Pairing Code didapatkan: ${pairingCodeText}, mengirim ke server...`);
-            // Kirim tipe 'pairing_code' agar cocok dengan api.php
             await sendResultToCallback({ status: 'success', type: 'pairing_code', data: pairingCodeText });
         }
 
-        // =========================================================================
-        // LANGKAH KRUSIAL: Pantau halaman untuk status terhubung
-        // =========================================================================
         console.log("12. Memantau status koneksi di halaman (menunggu hingga 2 menit)...");
-        // Kita asumsikan setelah terhubung, halaman akan redirect kembali ke /bots
-        // atau setidaknya URL akan berubah.
-        await page.waitForNavigation({ timeout: 120000 }); // Tunggu hingga 2 menit
+        await page.waitForNavigation({ timeout: 120000 });
         
         if (page.url().includes(BOTS_PAGE_URL)) {
              console.log("   ✅ Perangkat terdeteksi terhubung!");
-             // Setelah terhubung, kita perlu mengambil info bot baru.
-             // Untuk saat ini, kita akan ambil nomor HP dari bot terbaru di daftar.
              const latestBotNumber = await page.$eval('#botsList li:first-child .text-sm.font-semibold', el => el.textContent.trim());
-
              await sendResultToCallback({ 
                 status: 'success', 
                 type: 'connected', 
-                phone_number: latestBotNumber, // Kirim nomor HP yang terdeteksi
-                // bot_id bisa di-scrape juga jika diperlukan
+                phone_number: latestBotNumber,
              });
         } else {
             throw new Error("Halaman tidak redirect setelah koneksi, timeout.");
         }
         
     } catch (error) {
-        console.error(`❌ Terjadi error saat proses '${mode}':`, error.message);
-        await sendResultToCallback({ status: 'error', message: error.message || `Gagal total saat proses ${mode}.` });
+        console.error(`❌ Terjadi error saat proses '${action}':`, error.message);
+        await sendResultToCallback({ status: 'error', message: error.message || `Gagal total saat proses ${action}.` });
     } finally {
         if (browser) {
             await browser.close();
