@@ -35,26 +35,33 @@ async function main() {
         console.log(`2. Menavigasi ke halaman: ${BOTS_PAGE_URL}`);
         await page.goto(BOTS_PAGE_URL, { waitUntil: 'networkidle0' });
 
-        console.log("3. Mengambil data dari setiap bot...");
+        console.log("3. Mengambil SEMUA data dari setiap bot (termasuk status)...");
         const allBotsData = await page.evaluate(() => {
             const botList = document.querySelectorAll('#botsList > li');
             const results = [];
             botList.forEach(li => {
-                const numberEl = li.querySelector('.text-sm.font-semibold');
                 const statsEl = li.querySelector('.text-xs.text-gray-500');
                 const selectEl = li.querySelector('select[onchange^="updateBotSetting"]');
+                const statusEl = li.querySelector('span.inline-flex'); // Elemen untuk status
 
-                if (numberEl && statsEl && selectEl) {
-                    const number = numberEl.textContent.trim();
+                if (statsEl && selectEl && statusEl) {
                     const statsText = statsEl.textContent.trim();
                     const botIdMatch = selectEl.getAttribute('onchange').match(/updateBotSetting\((\d+),/);
                     const sentMatch = statsText.match(/Terkirim: (\d+)/);
-                    
+                    const statusText = statusEl.textContent.trim(); // "Terhubung", "Terputus", "Suspend"
+
+                    let standardizedStatus = 'inactive'; // Default
+                    if (statusText === 'Terhubung') {
+                        standardizedStatus = 'active';
+                    } else if (statusText === 'Suspend') {
+                        standardizedStatus = 'suspended';
+                    }
+
                     if (botIdMatch && sentMatch) {
                         results.push({
                             terimawa_bot_id: botIdMatch[1],
-                            phone_number: number,
-                            sent_count: parseInt(sentMatch[1], 10)
+                            sent_count: parseInt(sentMatch[1], 10),
+                            connection_status: standardizedStatus // Tambahkan status ke laporan
                         });
                     }
                 }
@@ -62,22 +69,16 @@ async function main() {
             return results;
         });
 
-        console.log(`   ✅ Ditemukan total ${allBotsData.length} data bot.`);
+        console.log(`   ✅ Ditemukan total ${allBotsData.length} data bot untuk dilaporkan.`);
 
-        // --- PERUBAHAN DI SINI: MEMBUAT sync.js LEBIH PINTAR ---
-        // Filter data, hanya ambil bot yang memiliki sent_count > 0
-        const activeBotsData = allBotsData.filter(bot => bot.sent_count > 0);
-        console.log(`    फिल्टर (Filter): Ditemukan ${activeBotsData.length} bot aktif (sent_count > 0) untuk dilaporkan.`);
-        // --- AKHIR PERUBAHAN ---
-
-        if (activeBotsData.length > 0) {
+        if (allBotsData.length > 0) {
             console.log(`4. Mengirim data ke URL callback: ${SYNC_CALLBACK_URL}`);
             const response = await fetch(SYNC_CALLBACK_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     secret: SYNC_SECRET,
-                    bots: activeBotsData // Kirim data yang sudah difilter
+                    bots: allBotsData // Kirim SEMUA data, jangan difilter lagi
                 })
             });
 
@@ -87,7 +88,7 @@ async function main() {
                 throw new Error(`Gagal mengirim data. Status: ${response.status}. Pesan: ${await response.text()}`);
             }
         } else {
-            console.log("4. Tidak ada data bot aktif untuk dikirim. Proses selesai.");
+            console.log("4. Tidak ada data bot untuk dikirim. Proses selesai.");
         }
 
     } catch (error) {
