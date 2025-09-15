@@ -1,5 +1,10 @@
-const puppeteer = require('puppeteer-core');
+// --- GANTI REQUIRE INI ---
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const chromium = require('@sparticuz/chromium');
+
+// --- AKTIFKAN PLUGIN STEALTH ---
+puppeteer.use(StealthPlugin());
 
 // --- KONFIGURASI APLIKASI ---
 const LOGIN_PAGE_URL = "https://app.terimawa.com/login";
@@ -62,11 +67,11 @@ async function launchBrowser() {
         args: chromium.args,
         defaultViewport: chromium.defaultViewport,
         executablePath: await chromium.executablePath(),
-        headless: chromium.headless,
+        headless: chromium.headless, // Ini penting untuk GitHub Actions
     });
 }
 
-// --- FUNGSI LOGIN ---
+// --- FUNGSI LOGIN (SUDAH DIMODIFIKASI) ---
 async function loginAndGetPage(browser) {
     const page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36');
@@ -78,17 +83,32 @@ async function loginAndGetPage(browser) {
     await page.type('input[name="username"]', TERIMAWA_USERNAME);
     await page.type('input[name="password"]', TERIMAWA_PASSWORD);
 
-    console.log("4. Mengklik tombol login...");
+    console.log("4. Mencari frame reCAPTCHA...");
+    await page.waitForSelector('iframe[src*="recaptcha"]', { timeout: 10000 });
+    const iframe = await page.frames().find(frame => frame.url().includes('recaptcha'));
+    if (!iframe) {
+        throw new Error("Frame reCAPTCHA tidak ditemukan!");
+    }
+
+    console.log("   ✅ Frame ditemukan. Mencari kotak centang...");
+    const checkboxSelector = `div.recaptcha-checkbox-border`;
+    await iframe.waitForSelector(checkboxSelector);
+    await iframe.click(checkboxSelector);
+    console.log("   ✅ Kotak centang berhasil di-klik.");
+
+    await page.waitForTimeout(3000); 
+
+    console.log("5. Mengklik tombol login...");
     await Promise.all([
         page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 30000 }),
         page.click('button[type="submit"]')
     ]);
 
     if (!page.url().startsWith(SUCCESS_URL_REDIRECT)) {
-        throw new Error(`Gagal login. URL saat ini: ${page.url()}. Pastikan kredensial benar.`);
+        throw new Error(`Gagal login. URL saat ini: ${page.url()}. Mungkin klik reCAPTCHA terdeteksi bot.`);
     }
     
-    console.log(`   ✅ Login berhasil.`);
+    console.log(`   ✅ Login berhasil secara otomatis.`);
     return page;
 }
 
@@ -250,7 +270,6 @@ async function manageBot(settingType, terimawaBotId, value) {
         console.log(`5. Menavigasi ke halaman Bots: ${BOTS_PAGE_URL}`);
         await page.goto(BOTS_PAGE_URL, { waitUntil: 'networkidle0' });
 
-        // Cari <li> container untuk bot yang spesifik DAN AKTIF
         const botContainerXPath = 
             `//li[.//select[contains(@onchange, "updateBotSetting(${terimawaBotId},")] and .//span[contains(text(), "Terhubung")]]`;
         
