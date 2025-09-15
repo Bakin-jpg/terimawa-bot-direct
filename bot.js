@@ -1,9 +1,7 @@
-// --- GANTI REQUIRE INI ---
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const chromium = require('@sparticuz/chromium');
 
-// --- AKTIFKAN PLUGIN STEALTH ---
 puppeteer.use(StealthPlugin());
 
 // --- KONFIGURASI APLIKASI ---
@@ -67,11 +65,11 @@ async function launchBrowser() {
         args: chromium.args,
         defaultViewport: chromium.defaultViewport,
         executablePath: await chromium.executablePath(),
-        headless: chromium.headless, // Ini penting untuk GitHub Actions
+        headless: chromium.headless,
     });
 }
 
-// --- FUNGSI LOGIN (SUDAH DIMODIFIKASI) ---
+// --- FUNGSI LOGIN BARU UNTUK MATH CAPTCHA ---
 async function loginAndGetPage(browser) {
     const page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36');
@@ -80,37 +78,50 @@ async function loginAndGetPage(browser) {
     await page.goto(LOGIN_PAGE_URL, { waitUntil: 'networkidle0', timeout: 60000 });
     
     console.log("3. Mengisi form login...");
-    await page.type('input[name="username"]', TERIMAWA_USERNAME);
-    await page.type('input[name="password"]', TERIMAWA_PASSWORD);
+    await page.type('input#username', TERIMAWA_USERNAME);
+    await page.type('input#password', TERIMAWA_PASSWORD);
 
-    console.log("4. Mencari frame reCAPTCHA...");
-    await page.waitForSelector('iframe[src*="recaptcha"]', { timeout: 10000 });
-    const iframe = await page.frames().find(frame => frame.url().includes('recaptcha'));
-    if (!iframe) {
-        throw new Error("Frame reCAPTCHA tidak ditemukan!");
+    // --- LOGIKA BARU UNTUK MENYELESAIKAN CAPTCHA MATEMATIKA ---
+    console.log("4. Menyelesaikan captcha matematika...");
+    await page.waitForSelector('#mathQuestion');
+    const questionText = await page.$eval('#mathQuestion', el => el.textContent); // Contoh: "26 + 33 = ?"
+    
+    const cleanQuestion = questionText.replace('=', '').replace('?', '').trim(); // "26 + 33"
+    const parts = cleanQuestion.split(' '); // ["26", "+", "33"]
+    
+    const num1 = parseInt(parts[0], 10);
+    const operator = parts[1];
+    const num2 = parseInt(parts[2], 10);
+    
+    let answer;
+    if (operator === '+') {
+        answer = num1 + num2;
+    } else if (operator === '-') {
+        answer = num1 - num2;
+    } else if (operator === '*') {
+        answer = num1 * num2;
+    } else {
+        throw new Error(`Operator matematika tidak dikenal: ${operator}`);
     }
-
-    console.log("   ✅ Frame ditemukan. Mencari kotak centang...");
-    const checkboxSelector = `div.recaptcha-checkbox-border`;
-    await iframe.waitForSelector(checkboxSelector);
-    await iframe.click(checkboxSelector);
-    console.log("   ✅ Kotak centang berhasil di-klik.");
-
-    await page.waitForTimeout(3000); 
-
+    
+    console.log(`   ✅ Soal: ${questionText} Jawaban: ${answer}`);
+    
+    await page.type('input#mathAnswer', String(answer));
+    
     console.log("5. Mengklik tombol login...");
     await Promise.all([
         page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 30000 }),
-        page.click('button[type="submit"]')
+        page.click('button#loginBtn')
     ]);
 
     if (!page.url().startsWith(SUCCESS_URL_REDIRECT)) {
-        throw new Error(`Gagal login. URL saat ini: ${page.url()}. Mungkin klik reCAPTCHA terdeteksi bot.`);
+        throw new Error(`Gagal login. URL saat ini: ${page.url()}. Pastikan jawaban captcha benar.`);
     }
     
-    console.log(`   ✅ Login berhasil secara otomatis.`);
+    console.log(`   ✅ Login berhasil secara otomatis!`);
     return page;
 }
+
 
 // --- FUNGSI CALLBACK KE SERVER ANDA ---
 async function sendResultToCallback(payload) {
