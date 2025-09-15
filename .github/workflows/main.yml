@@ -82,7 +82,7 @@ jobs:
             ${{ runner.os }}-node-
 
       - name: 4. Install Dependencies
-        run: npm install puppeteer-core @sparticuz/chromium
+        run: npm install
         
       - name: 5. Jalankan Skrip Bot TerimaWA
         run: node bot.js
