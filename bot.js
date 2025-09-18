@@ -19,7 +19,8 @@ const {
     PHONE_NUMBER,
     DB_ACCOUNT_ID,    
     TERIMAWA_BOT_ID,  
-    VALUE             
+    VALUE,
+    FLARESOLVERR_URL // Variabel baru dari file workflow untuk alamat FlareSolverr
 } = process.env;
 
 
@@ -62,59 +63,92 @@ async function main() {
 async function launchBrowser() {
     console.log("1. Meluncurkan browser...");
     return await puppeteer.launch({
-        args: chromium.args,
+        args: [
+            ...chromium.args,
+            '--disable-blink-features=AutomationControlled'
+        ],
         defaultViewport: chromium.defaultViewport,
         executablePath: await chromium.executablePath(),
         headless: chromium.headless,
     });
 }
 
-// --- FUNGSI LOGIN YANG TELAH DIPERBAIKI DAN LEBIH STABIL ---
+// ======================================================================
+// --- FUNGSI LOGIN BARU DENGAN INTEGRASI FLARESOLVERR ---
+// ======================================================================
 async function loginAndGetPage(browser) {
-    const page = await browser.newPage();
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36');
+    if (!FLARESOLVERR_URL) {
+        throw new Error("FLARESOLVERR_URL tidak diatur di environment. Tidak bisa melewati Cloudflare.");
+    }
+
+    console.log("2. Meminta sesi Cloudflare dari FlareSolverr...");
+    const response = await fetch(`${FLARESOLVERR_URL}/v1`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            cmd: 'request.get',
+            url: LOGIN_PAGE_URL,
+            maxTimeout: 120000 // Timeout 2 menit untuk FlareSolverr
+        })
+    });
+
+    const flaresolverrResponse = await response.json();
     
-    console.log(`2. Membuka halaman login: ${LOGIN_PAGE_URL}`);
+    if (flaresolverrResponse.status !== 'ok') {
+        console.error("Respons FlareSolverr:", flaresolverrResponse);
+        throw new Error(`FlareSolverr gagal mendapatkan sesi: ${flaresolverrResponse.message}`);
+    }
+    console.log("   ✅ Sesi Cloudflare dan cookie berhasil didapatkan.");
+
+    // Ambil cookie dan user-agent dari FlareSolverr
+    const { userAgent, cookies } = flaresolverrResponse.solution;
+
+    // Buka halaman baru dan atur cookie SEBELUM navigasi
+    const page = await browser.newPage();
+    await page.setUserAgent(userAgent);
+    await page.setCookie(...cookies.map(c => ({
+        name: c.name,
+        value: c.value,
+        domain: c.domain,
+        path: c.path,
+        expires: c.expiry,
+        httpOnly: c.httpOnly,
+        secure: c.secure,
+        sameSite: c.sameSite
+    })));
+    
+    console.log(`3. Membuka halaman login dengan sesi yang sudah divalidasi...`);
     await page.goto(LOGIN_PAGE_URL, { waitUntil: 'networkidle0', timeout: 60000 });
     
-    console.log("3. Menunggu form login dan mengisi data...");
-
-    // ======================== PERBAIKAN KRUSIAL DI SINI ========================
-    // Secara eksplisit menunggu selector input username muncul dan terlihat di halaman.
-    // Ini akan mengatasi error "No element found for selector: input#username".
+    // Mulai dari sini, prosesnya sama seperti sebelumnya
+    console.log("4. Menunggu form login dan mengisi data...");
     const usernameSelector = 'input#username';
     try {
         await page.waitForSelector(usernameSelector, { visible: true, timeout: 15000 });
         console.log("   - Form login ditemukan.");
     } catch (e) {
-        // Jika elemen tidak ditemukan dalam 15 detik, ambil screenshot dan lempar error
         await page.screenshot({ path: 'error_form_tidak_ditemukan.png' });
-        throw new Error(`Gagal menemukan form login (input#username) dalam 15 detik. Screenshot 'error_form_tidak_ditemukan.png' disimpan.`);
+        throw new Error(`Gagal menemukan form login (input#username) setelah melewati Cloudflare. Screenshot disimpan.`);
     }
-    // =========================================================================
 
-    // Setelah dipastikan ada, baru isi datanya.
     await page.type(usernameSelector, TERIMAWA_USERNAME);
     await page.type('input#password', TERIMAWA_PASSWORD);
 
-    // --- LOGIKA UNTUK MENYELESAIKAN CAPTCHA MATEMATIKA ---
-    console.log("4. Menyelesaikan captcha matematika...");
+    console.log("5. Menyelesaikan captcha matematika...");
     await page.waitForSelector('#mathQuestion');
     const questionText = await page.$eval('#mathQuestion', el => el.textContent);
-    
     let answer;
     try {
-        const mathProblem = questionText.split(' = ')[0]; // Contoh: "26 + 33"
-        answer = eval(mathProblem); // Menggunakan eval untuk kalkulasi sederhana
+        const mathProblem = questionText.split(' = ')[0];
+        answer = eval(mathProblem);
         if (isNaN(answer)) throw new Error('Hasil perhitungan bukan angka.');
     } catch (e) {
         throw new Error(`Gagal memecahkan soal captcha: "${questionText}". Error: ${e.message}`);
     }
-    
     console.log(`   ✅ Soal: ${questionText} Jawaban: ${answer}`);
     await page.type('input#mathAnswer', String(answer));
     
-    console.log("5. Mengklik tombol login...");
+    console.log("6. Mengklik tombol login...");
     await Promise.all([
         page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 30000 }),
         page.click('button#loginBtn')
@@ -122,13 +156,12 @@ async function loginAndGetPage(browser) {
 
     if (!page.url().startsWith(SUCCESS_URL_REDIRECT)) {
         await page.screenshot({ path: 'error_login_gagal.png' });
-        throw new Error(`Gagal login. URL saat ini: ${page.url()}. Pastikan kredensial & jawaban captcha benar. Screenshot 'error_login_gagal.png' disimpan.`);
+        throw new Error(`Gagal login. URL saat ini: ${page.url()}. Screenshot 'error_login_gagal.png' disimpan.`);
     }
     
     console.log(`   ✅ Login berhasil secara otomatis!`);
     return page;
 }
-
 
 // --- FUNGSI CALLBACK KE SERVER ANDA ---
 async function sendResultToCallback(payload) {
@@ -138,7 +171,7 @@ async function sendResultToCallback(payload) {
         return;
     }
     
-    console.log(`-> Mengirim hasil ke callback URL: ***`); // Sembunyikan URL di log
+    console.log(`-> Mengirim hasil ke callback URL: ***`);
     const callbackPayload = { ...payload, secret: CALLBACK_SECRET, db_account_id: DB_ACCOUNT_ID };
     
     try {
@@ -163,7 +196,7 @@ async function sendResultToCallback(payload) {
 async function pollForConnection(page, phoneNumber) {
     console.log(`🔄 Memulai polling untuk nomor: ${phoneNumber}`);
     for (let i = 0; i < 45; i++) { 
-        await new Promise(resolve => setTimeout(resolve, 2000)); // Ganti waitForTimeout
+        await new Promise(resolve => setTimeout(resolve, 2000));
         
         try {
             console.log(`   ...mencari bot ${phoneNumber}... (percobaan ${i + 1})`);
@@ -323,7 +356,7 @@ async function manageBot(settingType, terimawaBotId, value) {
         }
         
         console.log("   ...menunggu 3 detik agar perubahan diproses oleh server terimawa.com...");
-        await new Promise(resolve => setTimeout(resolve, 3000)); // Ganti waitForTimeout
+        await new Promise(resolve => setTimeout(resolve, 3000));
 
         await sendResultToCallback({ status: 'success', type: 'management', message: `Aksi ${settingType} berhasil.` });
 
