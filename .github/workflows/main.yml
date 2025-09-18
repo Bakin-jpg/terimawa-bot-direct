@@ -1,5 +1,5 @@
 # Nama Workflow yang akan tampil di tab "Actions" di GitHub
-name: Bot TerimaWA
+name: Bot TerimaWA (Proxy Strategy)
 
 # =========================================================================
 # TRIGGER
@@ -20,50 +20,58 @@ on:
         required: true
         type: string
 
-      # --- INPUT BARU UNTUK BOT BARU ---
       phone_number:
         description: 'Nomor HP untuk metode pairing code (contoh: 62812...)'
-        required: false # Tidak wajib, hanya untuk pairing
+        required: false
         type: string
         
-      # --- INPUT BARU UNTUK MANAJEMEN BOT ---
       terimawa_bot_id:
         description: 'ID Bot dari terimawa.com untuk dikelola'
-        required: false # Tidak wajib, hanya untuk manajemen
+        required: false
         type: string
         
       value:
         description: 'Nilai yang akan di-set (misal: mode "1", atau blast "1"/"0")'
-        required: false # Tidak wajib, hanya untuk manajemen
+        required: false
         type: string
 
 # =========================================================================
 # JOBS
 # =========================================================================
 jobs:
-  run-bot-script:
-    name: Menjalankan Skrip Bot
+  run-bot-via-proxy:
+    name: Mencoba via Proxy ${{ matrix.proxy }}
     runs-on: ubuntu-latest
     
-    # ========================== PERBAIKAN 1 ==========================
-    # Menjalankan service FlareSolverr di latar belakang.
-    # Skrip bot akan berkomunikasi dengan service ini untuk melewati Cloudflare.
-    services:
-      flaresolverr:
-        image: ghcr.io/flaresolverr/flaresolverr:latest
-        ports:
-          - 8191:8191 # Memetakan port container ke host runner
-        env:
-          LOG_LEVEL: info # (Opsional) Mengatur level log FlareSolverr
-          
+    # =======================================================================
+    # STRATEGI INTI: Menjalankan job yang sama untuk setiap proxy di daftar.
+    # =======================================================================
+    strategy:
+      # Jika satu proxy gagal, jangan batalkan yang lain. Lanjutkan mencoba!
+      fail-fast: false
+      matrix:
+        proxy: [
+          # --- GANTI DAN TAMBAHKAN DAFTAR PROXY ANDA DI SINI ---
+
+          # Ini proxy dari Perancis yang Anda temukan:
+          '54.38.183.154:43258',
+
+          # Contoh lain untuk memperbesar peluang (cari yang baru untuk hasil terbaik):
+          '177.44.240.51:8080',  # Brazil
+          '103.152.4.88:80',     # Indonesia
+          '181.112.193.186:999', # Bolivia
+          '45.228.13.194:999',  # Paraguay
+          '190.104.14.2:8080',   # Argentina
+          '81.91.137.130:8080'   # Kenya
+
+          # Tambahkan lebih banyak proxy di sini...
+        ]
+        
     # Definisikan environment variables yang akan tersedia untuk bot.js
-    # PENTING: Semua value di 'secrets' harus diatur di Settings -> Secrets -> Actions
     env:
-      # Kredensial Login TerimaWA
+      # Kredensial Login TerimaWA (dari Secrets)
       TERIMAWA_USERNAME: ${{ secrets.TERIMAWA_USERNAME }}
       TERIMAWA_PASSWORD: ${{ secrets.TERIMAWA_PASSWORD }}
-      
-      # URL dan Secret untuk Callback
       CALLBACK_URL: ${{ secrets.CALLBACK_URL }}
       CALLBACK_SECRET: ${{ secrets.CALLBACK_SECRET }}
       
@@ -74,9 +82,8 @@ jobs:
       TERIMAWA_BOT_ID: ${{ github.event.inputs.terimawa_bot_id }}
       VALUE: ${{ github.event.inputs.value }}
       
-      # ========================== PERBAIKAN 2 ==========================
-      # Variabel baru untuk memberitahu bot.js di mana FlareSolverr berjalan.
-      FLARESOLVERR_URL: 'http://localhost:8191'
+      # Variabel baru untuk meneruskan proxy dari matrix ke bot.js
+      PROXY_SERVER: ${{ matrix.proxy }}
 
     # Urutan langkah-langkah yang akan dijalankan
     steps:
@@ -99,5 +106,7 @@ jobs:
       - name: 4. Install Dependencies
         run: npm install
         
-      - name: 5. Jalankan Skrip Bot TerimaWA
+      - name: 5. Jalankan Skrip Bot via Proxy
+        # Terus lanjutkan bahkan jika skrip ini gagal, agar kita bisa melihat hasil job lain
+        continue-on-error: true 
         run: node bot.js
