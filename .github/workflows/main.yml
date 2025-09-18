@@ -45,6 +45,17 @@ jobs:
     name: Menjalankan Skrip Bot
     runs-on: ubuntu-latest
     
+    # ========================== PERBAIKAN 1 ==========================
+    # Menjalankan service FlareSolverr di latar belakang.
+    # Skrip bot akan berkomunikasi dengan service ini untuk melewati Cloudflare.
+    services:
+      flaresolverr:
+        image: ghcr.io/flaresolverr/flaresolverr:latest
+        ports:
+          - 8191:8191 # Memetakan port container ke host runner
+        env:
+          LOG_LEVEL: info # (Opsional) Mengatur level log FlareSolverr
+          
     # Definisikan environment variables yang akan tersedia untuk bot.js
     # PENTING: Semua value di 'secrets' harus diatur di Settings -> Secrets -> Actions
     env:
@@ -62,6 +73,10 @@ jobs:
       PHONE_NUMBER: ${{ github.event.inputs.phone_number }}
       TERIMAWA_BOT_ID: ${{ github.event.inputs.terimawa_bot_id }}
       VALUE: ${{ github.event.inputs.value }}
+      
+      # ========================== PERBAIKAN 2 ==========================
+      # Variabel baru untuk memberitahu bot.js di mana FlareSolverr berjalan.
+      FLARESOLVERR_URL: 'http://localhost:8191'
 
     # Urutan langkah-langkah yang akan dijalankan
     steps:
