@@ -19,8 +19,8 @@ const {
     PHONE_NUMBER,
     DB_ACCOUNT_ID,    
     TERIMAWA_BOT_ID,  
-    VALUE,
-    FLARESOLVERR_URL // Variabel baru dari file workflow untuk alamat FlareSolverr
+    VALUE             
+    // Variabel PROXY_SERVER akan dibaca langsung di dalam fungsi launchBrowser
 } = process.env;
 
 
@@ -59,10 +59,16 @@ async function main() {
     }
 }
 
-// --- FUNGSI HELPER UNTUK BROWSER ---
+// ======================================================================
+// --- FUNGSI HELPER UNTUK BROWSER (TELAH DIMODIFIKASI) ---
+// ======================================================================
 async function launchBrowser() {
     console.log("1. Meluncurkan browser...");
-    return await puppeteer.launch({
+    
+    // Ambil proxy dari environment variable yang di-set oleh main.yml
+    const proxy = process.env.PROXY_SERVER;
+    
+    const launchOptions = {
         args: [
             ...chromium.args,
             '--disable-blink-features=AutomationControlled'
@@ -70,71 +76,42 @@ async function launchBrowser() {
         defaultViewport: chromium.defaultViewport,
         executablePath: await chromium.executablePath(),
         headless: chromium.headless,
-    });
+    };
+
+    // Jika ada proxy yang diset di environment, tambahkan ke argumen peluncuran.
+    if (proxy) {
+        console.log(`   - Menggunakan Proxy: ${proxy}`);
+        launchOptions.args.push(`--proxy-server=${proxy}`);
+    } else {
+        console.log("   - Menjalankan tanpa proxy.");
+    }
+    
+    return await puppeteer.launch(launchOptions);
 }
 
-// ======================================================================
-// --- FUNGSI LOGIN BARU DENGAN INTEGRASI FLARESOLVERR ---
-// ======================================================================
+
+// --- FUNGSI LOGIN ---
 async function loginAndGetPage(browser) {
-    if (!FLARESOLVERR_URL) {
-        throw new Error("FLARESOLVERR_URL tidak diatur di environment. Tidak bisa melewati Cloudflare.");
-    }
-
-    console.log("2. Meminta sesi Cloudflare dari FlareSolverr...");
-    const response = await fetch(`${FLARESOLVERR_URL}/v1`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            cmd: 'request.get',
-            url: LOGIN_PAGE_URL,
-            maxTimeout: 120000 // Timeout 2 menit untuk FlareSolverr
-        })
-    });
-
-    const flaresolverrResponse = await response.json();
-    
-    if (flaresolverrResponse.status !== 'ok') {
-        console.error("Respons FlareSolverr:", flaresolverrResponse);
-        throw new Error(`FlareSolverr gagal mendapatkan sesi: ${flaresolverrResponse.message}`);
-    }
-    console.log("   ✅ Sesi Cloudflare dan cookie berhasil didapatkan.");
-
-    // Ambil cookie dan user-agent dari FlareSolverr
-    const { userAgent, cookies } = flaresolverrResponse.solution;
-
-    // Buka halaman baru dan atur cookie SEBELUM navigasi
     const page = await browser.newPage();
-    await page.setUserAgent(userAgent);
-    await page.setCookie(...cookies.map(c => ({
-        name: c.name,
-        value: c.value,
-        domain: c.domain,
-        path: c.path,
-        expires: c.expiry,
-        httpOnly: c.httpOnly,
-        secure: c.secure,
-        sameSite: c.sameSite
-    })));
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36');
     
-    console.log(`3. Membuka halaman login dengan sesi yang sudah divalidasi...`);
-    await page.goto(LOGIN_PAGE_URL, { waitUntil: 'networkidle0', timeout: 60000 });
+    console.log(`2. Membuka halaman login: ${LOGIN_PAGE_URL}`);
+    await page.goto(LOGIN_PAGE_URL, { waitUntil: 'networkidle0', timeout: 90000 }); // Timeout diperpanjang untuk proxy lambat
     
-    // Mulai dari sini, prosesnya sama seperti sebelumnya
-    console.log("4. Menunggu form login dan mengisi data...");
+    console.log("3. Menunggu form login dan mengisi data...");
     const usernameSelector = 'input#username';
     try {
-        await page.waitForSelector(usernameSelector, { visible: true, timeout: 15000 });
+        await page.waitForSelector(usernameSelector, { visible: true, timeout: 20000 }); // Timeout diperpanjang
         console.log("   - Form login ditemukan.");
     } catch (e) {
         await page.screenshot({ path: 'error_form_tidak_ditemukan.png' });
-        throw new Error(`Gagal menemukan form login (input#username) setelah melewati Cloudflare. Screenshot disimpan.`);
+        throw new Error(`Gagal menemukan form login (input#username). Mungkin proxy gagal atau diblokir. Screenshot disimpan.`);
     }
 
     await page.type(usernameSelector, TERIMAWA_USERNAME);
     await page.type('input#password', TERIMAWA_PASSWORD);
 
-    console.log("5. Menyelesaikan captcha matematika...");
+    console.log("4. Menyelesaikan captcha matematika...");
     await page.waitForSelector('#mathQuestion');
     const questionText = await page.$eval('#mathQuestion', el => el.textContent);
     let answer;
@@ -148,11 +125,16 @@ async function loginAndGetPage(browser) {
     console.log(`   ✅ Soal: ${questionText} Jawaban: ${answer}`);
     await page.type('input#mathAnswer', String(answer));
     
-    console.log("6. Mengklik tombol login...");
+    console.log("5. Mengklik tombol login...");
     await Promise.all([
-        page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 30000 }),
+        page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 60000 }),
         page.click('button#loginBtn')
     ]);
+
+    if (page.url().includes("blocked")) {
+        await page.screenshot({ path: 'error_diblokir_cloudflare.png' });
+        throw new Error(`Proxy berhasil terhubung TAPI diblokir oleh Cloudflare. URL saat ini: ${page.url()}. Screenshot disimpan.`);
+    }
 
     if (!page.url().startsWith(SUCCESS_URL_REDIRECT)) {
         await page.screenshot({ path: 'error_login_gagal.png' });
