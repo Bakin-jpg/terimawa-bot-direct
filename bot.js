@@ -69,7 +69,7 @@ async function launchBrowser() {
     });
 }
 
-// --- FUNGSI LOGIN BARU UNTUK MATH CAPTCHA ---
+// --- FUNGSI LOGIN YANG TELAH DIPERBAIKI DAN LEBIH STABIL ---
 async function loginAndGetPage(browser) {
     const page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36');
@@ -77,35 +77,41 @@ async function loginAndGetPage(browser) {
     console.log(`2. Membuka halaman login: ${LOGIN_PAGE_URL}`);
     await page.goto(LOGIN_PAGE_URL, { waitUntil: 'networkidle0', timeout: 60000 });
     
-    console.log("3. Mengisi form login...");
-    await page.type('input#username', TERIMAWA_USERNAME);
+    console.log("3. Menunggu form login dan mengisi data...");
+
+    // ======================== PERBAIKAN KRUSIAL DI SINI ========================
+    // Secara eksplisit menunggu selector input username muncul dan terlihat di halaman.
+    // Ini akan mengatasi error "No element found for selector: input#username".
+    const usernameSelector = 'input#username';
+    try {
+        await page.waitForSelector(usernameSelector, { visible: true, timeout: 15000 });
+        console.log("   - Form login ditemukan.");
+    } catch (e) {
+        // Jika elemen tidak ditemukan dalam 15 detik, ambil screenshot dan lempar error
+        await page.screenshot({ path: 'error_form_tidak_ditemukan.png' });
+        throw new Error(`Gagal menemukan form login (input#username) dalam 15 detik. Screenshot 'error_form_tidak_ditemukan.png' disimpan.`);
+    }
+    // =========================================================================
+
+    // Setelah dipastikan ada, baru isi datanya.
+    await page.type(usernameSelector, TERIMAWA_USERNAME);
     await page.type('input#password', TERIMAWA_PASSWORD);
 
-    // --- LOGIKA BARU UNTUK MENYELESAIKAN CAPTCHA MATEMATIKA ---
+    // --- LOGIKA UNTUK MENYELESAIKAN CAPTCHA MATEMATIKA ---
     console.log("4. Menyelesaikan captcha matematika...");
     await page.waitForSelector('#mathQuestion');
-    const questionText = await page.$eval('#mathQuestion', el => el.textContent); // Contoh: "26 + 33 = ?"
-    
-    const cleanQuestion = questionText.replace('=', '').replace('?', '').trim(); // "26 + 33"
-    const parts = cleanQuestion.split(' '); // ["26", "+", "33"]
-    
-    const num1 = parseInt(parts[0], 10);
-    const operator = parts[1];
-    const num2 = parseInt(parts[2], 10);
+    const questionText = await page.$eval('#mathQuestion', el => el.textContent);
     
     let answer;
-    if (operator === '+') {
-        answer = num1 + num2;
-    } else if (operator === '-') {
-        answer = num1 - num2;
-    } else if (operator === '*') {
-        answer = num1 * num2;
-    } else {
-        throw new Error(`Operator matematika tidak dikenal: ${operator}`);
+    try {
+        const mathProblem = questionText.split(' = ')[0]; // Contoh: "26 + 33"
+        answer = eval(mathProblem); // Menggunakan eval untuk kalkulasi sederhana
+        if (isNaN(answer)) throw new Error('Hasil perhitungan bukan angka.');
+    } catch (e) {
+        throw new Error(`Gagal memecahkan soal captcha: "${questionText}". Error: ${e.message}`);
     }
     
     console.log(`   ✅ Soal: ${questionText} Jawaban: ${answer}`);
-    
     await page.type('input#mathAnswer', String(answer));
     
     console.log("5. Mengklik tombol login...");
@@ -115,7 +121,8 @@ async function loginAndGetPage(browser) {
     ]);
 
     if (!page.url().startsWith(SUCCESS_URL_REDIRECT)) {
-        throw new Error(`Gagal login. URL saat ini: ${page.url()}. Pastikan jawaban captcha benar.`);
+        await page.screenshot({ path: 'error_login_gagal.png' });
+        throw new Error(`Gagal login. URL saat ini: ${page.url()}. Pastikan kredensial & jawaban captcha benar. Screenshot 'error_login_gagal.png' disimpan.`);
     }
     
     console.log(`   ✅ Login berhasil secara otomatis!`);
@@ -131,7 +138,7 @@ async function sendResultToCallback(payload) {
         return;
     }
     
-    console.log(`-> Mengirim hasil ke callback URL: ${CALLBACK_URL}`);
+    console.log(`-> Mengirim hasil ke callback URL: ***`); // Sembunyikan URL di log
     const callbackPayload = { ...payload, secret: CALLBACK_SECRET, db_account_id: DB_ACCOUNT_ID };
     
     try {
@@ -156,7 +163,7 @@ async function sendResultToCallback(payload) {
 async function pollForConnection(page, phoneNumber) {
     console.log(`🔄 Memulai polling untuk nomor: ${phoneNumber}`);
     for (let i = 0; i < 45; i++) { 
-        await page.waitForTimeout(2000);
+        await new Promise(resolve => setTimeout(resolve, 2000)); // Ganti waitForTimeout
         
         try {
             console.log(`   ...mencari bot ${phoneNumber}... (percobaan ${i + 1})`);
@@ -191,9 +198,10 @@ async function pollForConnection(page, phoneNumber) {
 
 async function getQr() {
     let browser = null;
+    let page;
     try {
         browser = await launchBrowser();
-        const page = await loginAndGetPage(browser);
+        page = await loginAndGetPage(browser);
 
         await page.goto(BOTS_PAGE_URL, { waitUntil: 'networkidle0' });
         await page.click("button#addBotBtn");
@@ -211,6 +219,7 @@ async function getQr() {
 
     } catch (error) {
         console.error("❌ Terjadi error saat proses QR:", error.message);
+        if(page) await page.screenshot({ path: 'error_qr_process.png' });
         await sendResultToCallback({ status: 'error', message: error.message || 'Gagal total saat proses QR.' });
     } finally {
         if (browser) await browser.close();
@@ -223,9 +232,10 @@ async function getPairingAndPollForConnection(phoneNumber) {
         return;
     }
     let browser = null;
+    let page;
     try {
         browser = await launchBrowser();
-        const page = await loginAndGetPage(browser);
+        page = await loginAndGetPage(browser);
 
         await page.goto(BOTS_PAGE_URL, { waitUntil: 'networkidle0' });
         await page.click("button#addBotBtn");
@@ -261,22 +271,23 @@ async function getPairingAndPollForConnection(phoneNumber) {
 
     } catch (error) {
         console.error("❌ Terjadi error saat proses Pairing:", error.message);
+        if(page) await page.screenshot({ path: 'error_pairing_process.png' });
         await sendResultToCallback({ status: 'error', message: error.message || 'Gagal total saat proses Pairing.' });
     } finally {
         if (browser) await browser.close();
     }
 }
 
-// --- FUNGSI MANAJEMEN BOT (DENGAN LOGIKA BARU DAN LEBIH PINTAR) ---
 async function manageBot(settingType, terimawaBotId, value) {
     if (!terimawaBotId || value === undefined) {
         await sendResultToCallback({ status: 'error', message: 'ID Bot TerimaWA atau Value tidak disediakan.' });
         return;
     }
     let browser = null;
+    let page;
     try {
         browser = await launchBrowser();
-        const page = await loginAndGetPage(browser);
+        page = await loginAndGetPage(browser);
 
         console.log(`5. Menavigasi ke halaman Bots: ${BOTS_PAGE_URL}`);
         await page.goto(BOTS_PAGE_URL, { waitUntil: 'networkidle0' });
@@ -312,18 +323,18 @@ async function manageBot(settingType, terimawaBotId, value) {
         }
         
         console.log("   ...menunggu 3 detik agar perubahan diproses oleh server terimawa.com...");
-        await page.waitForTimeout(3000); 
+        await new Promise(resolve => setTimeout(resolve, 3000)); // Ganti waitForTimeout
 
         await sendResultToCallback({ status: 'success', type: 'management', message: `Aksi ${settingType} berhasil.` });
 
     } catch (error) {
         console.error(`❌ Terjadi error saat manajemen bot:`, error.message);
+        if(page) await page.screenshot({ path: 'error_management_process.png' });
         await sendResultToCallback({ status: 'error', message: error.message || 'Gagal total saat manajemen bot.' });
     } finally {
         if (browser) await browser.close();
     }
 }
-
 
 // --- JALANKAN FUNGSI UTAMA ---
 main();
